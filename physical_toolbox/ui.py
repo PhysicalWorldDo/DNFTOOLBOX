@@ -38,6 +38,7 @@ from physical_toolbox.launching import launch_entry
 from physical_toolbox.manifest import ToolManifest
 from physical_toolbox.package_manager import PackageManager
 from physical_toolbox.repository import IndexTool, RepositoryClient, ToolboxUpdate
+from physical_toolbox.self_updater import SelfUpdateRunner
 from physical_toolbox.toolbox_update import ToolboxUpdateDownloader, is_toolbox_update_available
 from physical_toolbox.tool_grid import ToolTile, build_tool_tiles, default_selected_category, ordered_categories
 
@@ -169,6 +170,7 @@ class ToolboxApp(QMainWindow):
         self.state_store = InstallStateStore(workspace / "config" / "installed.json")
         self.package_manager = PackageManager(workspace, self.state_store)
         self.toolbox_update_downloader = ToolboxUpdateDownloader(workspace)
+        self.self_update_runner = SelfUpdateRunner(workspace)
         self.index_tools = []
         self.manifests: dict[str, ToolManifest] = {}
         self.tiles: tuple[ToolTile, ...] = ()
@@ -721,16 +723,28 @@ class ToolboxApp(QMainWindow):
             self.menu_button.setEnabled(True)
 
         self._show_progress("完成")
-        self.hint_label.setText(f"工具箱 {update.latest_version} 已下载：{package_path.name}。请关闭工具箱后安装新版。")
+        self.hint_label.setText(f"工具箱 {update.latest_version} 已下载：{package_path.name}。")
         result = QMessageBox.question(
             self,
             "下载完成",
-            f"新版工具箱已下载到：\n{package_path}\n\n是否打开下载目录？",
+            f"新版工具箱已下载到：\n{package_path}\n\n是否立即关闭工具箱并自动安装新版？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
         if result == QMessageBox.Yes:
-            subprocess.Popen(["explorer", f"/select,{package_path}"])
+            try:
+                self.self_update_runner.start(package_path)
+            except Exception as exc:
+                QMessageBox.critical(self, "启动更新器失败", str(exc))
+                return
+            self.hint_label.setText("正在启动独立更新器，工具箱即将关闭...")
+            self.close()
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
+            return
+
+        subprocess.Popen(["explorer", f"/select,{package_path}"])
 
     def _render_categories(self) -> None:
         for button in self.category_buttons.values():

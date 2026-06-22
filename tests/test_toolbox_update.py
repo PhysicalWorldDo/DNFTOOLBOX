@@ -2,6 +2,7 @@ import hashlib
 from pathlib import Path
 
 from physical_toolbox.repository import ToolboxIndex, ToolboxUpdate
+from physical_toolbox.self_updater import SelfUpdateRunner
 from physical_toolbox.toolbox_update import ToolboxUpdateDownloader, is_toolbox_update_available
 
 
@@ -58,3 +59,35 @@ def test_toolbox_update_downloader_downloads_and_verifies_package(tmp_path: Path
     assert downloaded.read_bytes() == source.read_bytes()
     assert progress
     assert progress[-1] == (source.stat().st_size, source.stat().st_size)
+
+
+def test_self_update_runner_writes_independent_wait_copy_restart_script(tmp_path: Path) -> None:
+    workspace = tmp_path / "toolbox"
+    package = tmp_path / "downloads" / "PhysicalWorldToolbox-0.2.0-win-x64.zip"
+    package.parent.mkdir(parents=True)
+    package.write_bytes(b"zip")
+
+    plan = SelfUpdateRunner(workspace).prepare(
+        package,
+        current_pid=1234,
+        restart_command=("python.exe", "toolbox.py"),
+    )
+
+    script = plan.script_path.read_text(encoding="utf-8")
+    assert plan.script_path.parent == workspace / "cache" / "self-update"
+    assert "Wait-Process -Id 1234" in script
+    assert "Get-Process -Id 1234" in script
+    assert "Expand-Archive" in script
+    assert "config', 'tools', 'downloads', 'cache', 'logs', '.git" in script
+    assert "Start-Process -FilePath 'python.exe'" in script
+    assert "toolbox.py" in script
+    assert str(package) in script
+    assert str(workspace) in script
+    assert plan.command[:5] == (
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+    )
+    assert plan.command[-2:] == ("-File", str(plan.script_path))

@@ -4,6 +4,7 @@ import time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMessageBox
 
 from physical_toolbox.about import ABOUT_NAV_ID
 from physical_toolbox.app_config import AppConfig
@@ -187,6 +188,52 @@ def test_toolbox_update_notice_does_not_interrupt_loaded_tools(tmp_path) -> None
     assert window.selected_category == "游戏工具"
     assert window.toolbox_update_info == update
     assert "0.2.0" in window.hint_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_download_toolbox_update_starts_independent_updater_when_confirmed(
+    tmp_path, monkeypatch
+) -> None:
+    app = create_application()
+    config = AppConfig(
+        name="物理世界的工具箱",
+        index_url=(tmp_path / "index.json").resolve().as_uri(),
+        channel="stable",
+    )
+    package_path = tmp_path / "downloads" / "PhysicalWorldToolbox-0.2.0-win-x64.zip"
+    package_path.parent.mkdir(parents=True)
+    package_path.write_bytes(b"new")
+    started: list[object] = []
+
+    class FakeDownloader:
+        def download(self, update, progress_callback=None):
+            if progress_callback is not None:
+                progress_callback(package_path.stat().st_size, package_path.stat().st_size)
+            return package_path
+
+    class FakeSelfUpdater:
+        def start(self, package):
+            started.append(package)
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args, **kwargs: None)
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+
+    window = ToolboxApp(tmp_path, config)
+    window.toolbox_update_downloader = FakeDownloader()
+    window.self_update_runner = FakeSelfUpdater()
+    window.toolbox_update_info = ToolboxUpdate(
+        latest_version="0.2.0",
+        package_url=package_path.as_uri(),
+        sha256="",
+    )
+
+    window.download_toolbox_update()
+
+    assert started == [package_path]
+    assert not window.isVisible()
 
     window.close()
     app.processEvents()
