@@ -182,6 +182,7 @@ class ToolboxApp(QMainWindow):
         self._update_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self._update_thread: threading.Thread | None = None
         self._auto_update_started = False
+        self._startup_about_pending_remote = False
 
         self.setWindowTitle(config.name)
         if APP_ICON_PATH.exists():
@@ -585,11 +586,13 @@ class ToolboxApp(QMainWindow):
 
     def _render_initial_ui(self) -> None:
         if self._load_local_tools():
+            self._startup_about_pending_remote = False
             self.hint_label.setText("本地工具已就绪，稍后将在后台检查更新。")
             return
 
         self._render_categories()
         self.select_about_page()
+        self._startup_about_pending_remote = True
         self.hint_label.setText("工具箱已启动，稍后将在后台检查更新。")
 
     def _load_local_tools(self) -> bool:
@@ -694,7 +697,10 @@ class ToolboxApp(QMainWindow):
         self.tiles = tiles
 
         self._render_categories()
-        if self.selected_category == ABOUT_NAV_ID:
+        if self.selected_category == ABOUT_NAV_ID and self._startup_about_pending_remote and self.tiles:
+            self._startup_about_pending_remote = False
+            self.select_category(default_selected_category(ordered_categories(self.index_tools), self.tiles))
+        elif self.selected_category == ABOUT_NAV_ID:
             self.select_about_page()
         elif not self.selected_category:
             self.select_category(default_selected_category(ordered_categories(self.index_tools), self.tiles))
@@ -716,7 +722,7 @@ class ToolboxApp(QMainWindow):
     def copy_project_address(self, tool_id: str) -> None:
         address = self._project_address_for_tool(tool_id)
         if not address:
-            QMessageBox.information(self, "没有项目地址", "这个工具暂时没有可复制的项目地址。")
+            QMessageBox.information(self, "没有项目地址", "这个工具暂时没有配置项目地址。")
             return
         QApplication.clipboard().setText(address)
         self.hint_label.setText(f"已复制项目地址：{address}")
@@ -725,12 +731,6 @@ class ToolboxApp(QMainWindow):
         manifest = self.manifests.get(tool_id)
         if manifest is not None and manifest.project_url:
             return manifest.project_url
-        for index_tool in self.index_tools:
-            if index_tool.id == tool_id and index_tool.manifest_url:
-                return index_tool.manifest_url
-        tool_dir = self.workspace / "tools" / tool_id
-        if tool_dir.exists():
-            return str(tool_dir)
         return ""
 
     def download_toolbox_update(self) -> None:
@@ -808,6 +808,7 @@ class ToolboxApp(QMainWindow):
         if category == ABOUT_NAV_ID:
             self.select_about_page()
             return
+        self._startup_about_pending_remote = False
         self.selected_category = category
         for name, button in self.category_buttons.items():
             button.setChecked(name == category)

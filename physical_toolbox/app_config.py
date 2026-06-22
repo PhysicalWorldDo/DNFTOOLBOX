@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+DEFAULT_INDEX_URL = "https://raw.githubusercontent.com/PhysicalWorldDo/DNFTOOLBOX-Registry/main/index.json"
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -16,7 +18,7 @@ class AppConfig:
     def default(cls, workspace: Path) -> "AppConfig":
         return cls(
             name="物理世界的工具箱",
-            index_url="https://raw.githubusercontent.com/PhysicalWorldDo/DNFTOOLBOX-Registry/main/index.json",
+            index_url=DEFAULT_INDEX_URL,
             channel="stable",
         )
 
@@ -34,15 +36,30 @@ def load_or_create_config(workspace: Path) -> AppConfig:
     path = workspace / "config" / "app.json"
     if not path.exists():
         config = AppConfig.default(workspace)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {"name": config.name, "indexUrl": config.index_url, "channel": config.channel},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        _save_config(path, config)
         return config
 
-    return AppConfig.from_dict(json.loads(path.read_text(encoding="utf-8")), workspace)
+    config = AppConfig.from_dict(json.loads(path.read_text(encoding="utf-8")), workspace)
+    if _uses_missing_old_example_index(config.index_url):
+        config = AppConfig(name=config.name, index_url=DEFAULT_INDEX_URL, channel=config.channel)
+        _save_config(path, config)
+    return config
+
+
+def _save_config(path: Path, config: AppConfig) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {"name": config.name, "indexUrl": config.index_url, "channel": config.channel},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _uses_missing_old_example_index(index_url: str) -> bool:
+    normalized = index_url.replace("\\", "/").lower()
+    if not normalized.endswith("/examples/remote-index/index.json"):
+        return False
+    return not Path(index_url).exists()
