@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QSizePolicy,
     QStyle,
     QVBoxLayout,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 from physical_toolbox.app_config import AppConfig
 from physical_toolbox.fonts import candidate_cjk_font_paths
 from physical_toolbox.install_state import InstallStateStore
+from physical_toolbox.launching import launch_entry
 from physical_toolbox.manifest import ToolManifest
 from physical_toolbox.package_manager import PackageManager
 from physical_toolbox.repository import RepositoryClient
@@ -144,15 +146,16 @@ class ToolboxApp(QMainWindow):
         self.tool_list.setWrapping(True)
         self.tool_list.setSpacing(14)
         self.tool_list.setIconSize(QSize(46, 46))
-        self.tool_list.setGridSize(QSize(94, 90))
+        self.tool_list.setGridSize(QSize(118, 96))
         self.tool_list.setUniformItemSizes(True)
+        self.tool_list.setWordWrap(True)
         self.tool_list.itemClicked.connect(self._select_item)
         self.tool_list.itemDoubleClicked.connect(self._launch_item)
         main_layout.addWidget(self.tool_list, 1)
 
         self.detail_bar = QFrame()
         self.detail_bar.setObjectName("detailBar")
-        self.detail_bar.setFixedHeight(86)
+        self.detail_bar.setFixedHeight(112)
         main_layout.addWidget(self.detail_bar)
 
         detail_layout = QGridLayout(self.detail_bar)
@@ -184,10 +187,28 @@ class ToolboxApp(QMainWindow):
         self.launch_button.clicked.connect(self.launch_selected)
         detail_layout.addWidget(self.launch_button, 0, 3, 2, 1)
 
+        self.uninstall_button = QPushButton("卸载")
+        self.uninstall_button.setObjectName("actionButton")
+        self.uninstall_button.clicked.connect(self.uninstall_selected)
+        detail_layout.addWidget(self.uninstall_button, 0, 4, 2, 1)
+
         self.open_dir_button = QPushButton("目录")
         self.open_dir_button.setObjectName("actionButton")
         self.open_dir_button.clicked.connect(self.open_selected_dir)
-        detail_layout.addWidget(self.open_dir_button, 0, 4, 2, 1)
+        detail_layout.addWidget(self.open_dir_button, 0, 5, 2, 1)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("downloadProgress")
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setVisible(False)
+        detail_layout.addWidget(self.progress_bar, 2, 0, 1, 6)
+
+        self.install_button.setEnabled(False)
+        self.launch_button.setEnabled(False)
+        self.uninstall_button.setEnabled(False)
+        self.open_dir_button.setEnabled(False)
 
         detail_layout.setColumnStretch(0, 1)
 
@@ -306,6 +327,18 @@ class ToolboxApp(QMainWindow):
             QPushButton#actionButton:hover {
                 background: white;
             }
+            QProgressBar#downloadProgress {
+                background: rgba(255, 255, 255, 52);
+                border: 0;
+                color: white;
+                min-height: 14px;
+                max-height: 14px;
+                text-align: center;
+                font-size: 10px;
+            }
+            QProgressBar#downloadProgress::chunk {
+                background: rgba(83, 227, 178, 210);
+            }
             """
         )
 
@@ -340,6 +373,7 @@ class ToolboxApp(QMainWindow):
         else:
             self.select_category(self.selected_category)
         self.hint_label.setText(f"提示：已加载 {len(self.tiles)} 个工具。单击查看说明，双击启动工具。")
+        self._sync_action_buttons()
 
     def _render_categories(self) -> None:
         for button in self.category_buttons.values():
@@ -393,6 +427,7 @@ class ToolboxApp(QMainWindow):
             index = self.version_combo.findText(tile.latest_version)
             if index >= 0:
                 self.version_combo.setCurrentIndex(index)
+        self._sync_action_buttons()
 
     def _launch_item(self, item: QListWidgetItem) -> None:
         self.selected_tool_id = item.data(Qt.UserRole)
@@ -407,11 +442,42 @@ class ToolboxApp(QMainWindow):
             QMessageBox.information(self, "请选择版本", "请先选择要安装的版本。")
             return
         try:
-            self.package_manager.install(manifest, version)
+            self._set_busy(True)
+            self._show_progress("准备下载...")
+            self.package_manager.install(manifest, version, progress_callback=self._update_download_progress)
         except Exception as exc:
+            self._show_progress("下载 / 安装失败")
             QMessageBox.critical(self, "安装失败", str(exc))
             return
+        finally:
+            self._set_busy(False)
         self.hint_label.setText(f"{manifest.name} 已安装：{version}")
+        self._show_progress("完成")
+        self.check_updates()
+
+    def uninstall_selected(self) -> None:
+        manifest = self._selected_manifest()
+        if manifest is None:
+            return
+        if manifest.id not in self.package_manager.installed_tools():
+            QMessageBox.information(self, "未安装", "这个工具还没有安装。")
+            return
+        result = QMessageBox.question(
+            self,
+            "确认卸载",
+            f"确定卸载 {manifest.name} 吗？这会删除本地 tools 目录下的安装文件。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if result != QMessageBox.Yes:
+            return
+        try:
+            self.package_manager.uninstall(manifest.id)
+        except Exception as exc:
+            QMessageBox.critical(self, "卸载失败", f"{exc}\n\n请先关闭这个工具后再卸载。")
+            return
+        self.hint_label.setText(f"{manifest.name} 已卸载")
+        self.progress_bar.setVisible(False)
         self.check_updates()
 
     def launch_selected(self) -> None:
@@ -426,7 +492,7 @@ class ToolboxApp(QMainWindow):
         if not entry.exists():
             QMessageBox.critical(self, "启动失败", f"入口文件不存在：{entry}")
             return
-        subprocess.Popen([str(entry)], cwd=str(entry.parent))
+        launch_entry(entry)
 
     def open_selected_dir(self) -> None:
         manifest = self._selected_manifest()
@@ -447,6 +513,44 @@ class ToolboxApp(QMainWindow):
             if tile.id == tool_id:
                 return tile
         return None
+
+    def _set_busy(self, busy: bool) -> None:
+        if busy:
+            for button in (self.install_button, self.launch_button, self.uninstall_button, self.open_dir_button):
+                button.setEnabled(False)
+            return
+        self._sync_action_buttons()
+
+    def _sync_action_buttons(self) -> None:
+        tile = self._tile(self.selected_tool_id) if self.selected_tool_id else None
+        has_selection = tile is not None
+        is_installed = bool(tile and tile.is_installed)
+        self.install_button.setEnabled(has_selection)
+        self.launch_button.setEnabled(is_installed)
+        self.open_dir_button.setEnabled(is_installed)
+        self.uninstall_button.setEnabled(is_installed)
+
+    def _show_progress(self, text: str) -> None:
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100 if text == "完成" else 0)
+        self.progress_bar.setFormat(text)
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+
+    def _update_download_progress(self, downloaded: int, total: int | None) -> None:
+        if total and total > 0:
+            percent = min(100, int(downloaded * 100 / total))
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(percent)
+            self.progress_bar.setFormat(f"下载中 {percent}%")
+        else:
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat(f"下载中 {downloaded // 1024} KB")
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
 
     def _icon_for_tile(self, tile: ToolTile) -> QIcon:
         icon_path = Path(tile.icon)

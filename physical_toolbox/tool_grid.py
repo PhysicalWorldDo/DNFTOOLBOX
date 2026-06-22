@@ -8,17 +8,14 @@ from physical_toolbox.repository import IndexTool
 
 
 DEFAULT_CATEGORIES: tuple[str, ...] = (
-    "硬件信息",
-    "CPU工具",
-    "主板工具",
-    "内存工具",
-    "显卡工具",
-    "磁盘工具",
-    "屏幕工具",
-    "综合工具",
-    "外设工具",
-    "烤鸡工具",
     "游戏工具",
+    "图像工具",
+    "音频工具",
+    "UI工具",
+    "插件工具",
+    "补丁工具",
+    "资源工具",
+    "角色工具",
     "其他工具",
 )
 
@@ -39,8 +36,9 @@ class ToolTile:
 
 def ordered_categories(index_tools: tuple[IndexTool, ...] | list[IndexTool]) -> tuple[str, ...]:
     dynamic_categories = {tool.category for tool in index_tools}
+    preferred = tuple(category for category in DEFAULT_CATEGORIES if category in dynamic_categories)
     extras = tuple(sorted(dynamic_categories.difference(DEFAULT_CATEGORIES)))
-    return DEFAULT_CATEGORIES + extras
+    return preferred + extras
 
 
 def build_tool_tiles(
@@ -80,4 +78,6 @@ def default_selected_category(categories: tuple[str, ...], tiles: tuple[ToolTile
     for category in categories:
         if category in categories_with_tools:
             return category
+    if tiles:
+        return tiles[0].category
     return categories[0] if categories else ""

@@ -7,9 +7,13 @@ import urllib.request
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
+from uuid import uuid4
 
 from physical_toolbox.install_state import InstalledTool, InstallStateStore
 from physical_toolbox.manifest import ToolManifest
+
+ProgressCallback = Callable[[int, int | None], None]
 
 
 class PackageManager:
@@ -23,24 +27,49 @@ class PackageManager:
     def installed_tools(self) -> dict[str, InstalledTool]:
         return self.state_store.load()
 
-    def download(self, url: str, filename: str | None = None) -> Path:
+    def download(
+        self,
+        url: str,
+        filename: str | None = None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> Path:
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         parsed = urllib.parse.urlparse(url)
         target_name = filename or Path(parsed.path).name or "package.zip"
         target = self.downloads_dir / target_name
 
         if parsed.scheme == "file":
-            shutil.copy2(Path(urllib.request.url2pathname(parsed.path)), target)
+            source = Path(urllib.request.url2pathname(parsed.path))
+            self._copy_file_with_progress(source, target, progress_callback)
             return target
 
         with urllib.request.urlopen(url, timeout=60) as response:
-            target.write_bytes(response.read())
+            total = response.headers.get("Content-Length")
+            self._write_response_with_progress(response, target, int(total) if total else None, progress_callback)
         return target
 
-    def install(self, manifest: ToolManifest, version: str) -> InstalledTool:
+    def install(
+        self,
+        manifest: ToolManifest,
+        version: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> InstalledTool:
         selected = manifest.version(version)
-        package_path = self.download(selected.package_url)
+        package_path = self.download(selected.package_url, progress_callback=progress_callback)
         return self.install_from_archive(manifest, version, package_path)
+
+    def uninstall(self, tool_id: str) -> None:
+        target = self.tools_dir / tool_id
+        if target.exists():
+            trash = self._sibling_path(target, "uninstall")
+            target.rename(trash)
+            try:
+                self._remove_path(trash)
+            except Exception:
+                if not target.exists() and trash.exists():
+                    trash.rename(target)
+                raise
+        self.state_store.remove(tool_id)
 
     def install_from_archive(self, manifest: ToolManifest, version: str, archive_path: Path) -> InstalledTool:
         selected = manifest.version(version)
@@ -78,6 +107,44 @@ class PackageManager:
         if expected_sha256 and digest.lower() != expected_sha256.lower():
             raise ValueError(f"sha256 mismatch for {archive_path.name}")
 
+    def _copy_file_with_progress(
+        self,
+        source: Path,
+        target: Path,
+        progress_callback: ProgressCallback | None,
+    ) -> None:
+        total = source.stat().st_size
+        copied = 0
+        with source.open("rb") as reader, target.open("wb") as writer:
+            for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+                writer.write(chunk)
+                copied += len(chunk)
+                if progress_callback is not None:
+                    progress_callback(copied, total)
+        shutil.copystat(source, target)
+        if progress_callback is not None and copied == 0:
+            progress_callback(0, total)
+
+    def _write_response_with_progress(
+        self,
+        response,
+        target: Path,
+        total: int | None,
+        progress_callback: ProgressCallback | None,
+    ) -> None:
+        downloaded = 0
+        with target.open("wb") as writer:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                writer.write(chunk)
+                downloaded += len(chunk)
+                if progress_callback is not None:
+                    progress_callback(downloaded, total)
+        if progress_callback is not None and downloaded == 0:
+            progress_callback(0, total)
+
     def _safe_extract(self, archive: zipfile.ZipFile, destination: Path) -> None:
         root = destination.resolve()
         for member in archive.infolist():
@@ -99,12 +166,7 @@ class PackageManager:
             if item.name in {"config", "data"}:
                 self._copy_preserving_existing(item, destination)
             else:
-                if destination.exists():
-                    if destination.is_dir():
-                        shutil.rmtree(destination)
-                    else:
-                        destination.unlink()
-                self._copy_item(item, destination)
+                self._replace_item(item, destination)
 
     def _copy_preserving_existing(self, source: Path, destination: Path) -> None:
         if source.is_file():
@@ -122,3 +184,45 @@ class PackageManager:
             shutil.copytree(source, destination)
         else:
             shutil.copy2(source, destination)
+
+    def _replace_item(self, source: Path, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.exists():
+            self._copy_item(source, destination)
+            return
+
+        temp_destination = self._sibling_path(destination, "new")
+        backup_destination = self._sibling_path(destination, "old")
+        self._copy_item(source, temp_destination)
+
+        try:
+            destination.rename(backup_destination)
+        except Exception:
+            self._remove_path(temp_destination, ignore_errors=True)
+            raise
+
+        try:
+            temp_destination.rename(destination)
+        except Exception:
+            try:
+                backup_destination.rename(destination)
+            finally:
+                self._remove_path(temp_destination, ignore_errors=True)
+            raise
+
+        self._remove_path(backup_destination, ignore_errors=True)
+
+    def _sibling_path(self, path: Path, label: str) -> Path:
+        return path.with_name(f".{path.name}.{label}-{uuid4().hex}")
+
+    def _remove_path(self, path: Path, ignore_errors: bool = False) -> None:
+        if not path.exists():
+            return
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=ignore_errors)
+        else:
+            try:
+                path.unlink()
+            except Exception:
+                if not ignore_errors:
+                    raise

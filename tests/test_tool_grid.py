@@ -34,7 +34,7 @@ def manifest(tool_id: str, name: str, category: str) -> ToolManifest:
     )
 
 
-def test_ordered_categories_keep_toolbox_style_defaults_before_extra_categories() -> None:
+def test_ordered_categories_keep_only_categories_that_have_tools_in_preferred_order() -> None:
     tools = (
         IndexTool("damage_calculator", "伤害计算器", "角色工具", "damage.json"),
         IndexTool("screenshot_helper", "截图助手", "游戏工具", "shot.json"),
@@ -42,9 +42,7 @@ def test_ordered_categories_keep_toolbox_style_defaults_before_extra_categories(
 
     categories = ordered_categories(tools)
 
-    assert categories[:3] == ("硬件信息", "CPU工具", "主板工具")
-    assert "游戏工具" in categories
-    assert categories[-1] == "角色工具"
+    assert categories == ("游戏工具", "角色工具")
 
 
 def test_build_tool_tiles_marks_installed_tool_and_exposes_versions() -> None:
