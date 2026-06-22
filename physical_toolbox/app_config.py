@@ -16,7 +16,7 @@ class AppConfig:
     def default(cls, workspace: Path) -> "AppConfig":
         return cls(
             name="物理世界的工具箱",
-            index_url=str((workspace / "examples" / "remote-index" / "index.json").resolve()),
+            index_url="https://raw.githubusercontent.com/PhysicalWorldDo/DNFTOOLBOX-Registry/main/index.json",
             channel="stable",
         )
 
