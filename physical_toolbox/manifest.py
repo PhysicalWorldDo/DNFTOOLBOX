@@ -98,6 +98,7 @@ class ToolManifest:
     icon: str
     entry: str
     need_admin: bool
+    project_url: str
     latest: dict[str, str]
     versions: tuple[ToolVersion, ...]
     permissions: tuple[str, ...] = ()
@@ -120,6 +121,7 @@ class ToolManifest:
             icon=str(data.get("icon", "")),
             entry=str(data["entry"]),
             need_admin=bool(data.get("needAdmin", False)),
+            project_url=str(data.get("projectUrl", "")),
             latest={str(key): str(value) for key, value in data.get("latest", {}).items()},
             versions=versions,
             permissions=tuple(str(item) for item in data.get("permissions", [])),

@@ -284,6 +284,8 @@ class ToolboxApp(QMainWindow):
         self.tool_list.setGridSize(QSize(118, 96))
         self.tool_list.setUniformItemSizes(True)
         self.tool_list.setWordWrap(True)
+        self.tool_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tool_list.customContextMenuRequested.connect(self.show_tool_context_menu)
         self.tool_list.itemClicked.connect(self._select_item)
         self.tool_list.itemDoubleClicked.connect(self._launch_item)
         main_layout.addWidget(self.tool_list, 1)
@@ -560,6 +562,20 @@ class ToolboxApp(QMainWindow):
 
         menu.exec(self.menu_button.mapToGlobal(self.menu_button.rect().bottomLeft()))
 
+    def show_tool_context_menu(self, position: QPoint) -> None:
+        item = self.tool_list.itemAt(position)
+        if item is None:
+            return
+        tool_id = item.data(Qt.UserRole)
+        if not tool_id:
+            return
+
+        menu = QMenu(self)
+        copy_action = QAction("复制项目地址", self)
+        copy_action.triggered.connect(lambda _checked=False, item_id=tool_id: self.copy_project_address(item_id))
+        menu.addAction(copy_action)
+        menu.exec(self.tool_list.mapToGlobal(position))
+
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         if self._auto_update_started:
@@ -696,6 +712,26 @@ class ToolboxApp(QMainWindow):
         if self.toolbox_update_info is None or not self.toolbox_update_info.release_url:
             return
         QDesktopServices.openUrl(QUrl(self.toolbox_update_info.release_url))
+
+    def copy_project_address(self, tool_id: str) -> None:
+        address = self._project_address_for_tool(tool_id)
+        if not address:
+            QMessageBox.information(self, "没有项目地址", "这个工具暂时没有可复制的项目地址。")
+            return
+        QApplication.clipboard().setText(address)
+        self.hint_label.setText(f"已复制项目地址：{address}")
+
+    def _project_address_for_tool(self, tool_id: str) -> str:
+        manifest = self.manifests.get(tool_id)
+        if manifest is not None and manifest.project_url:
+            return manifest.project_url
+        for index_tool in self.index_tools:
+            if index_tool.id == tool_id and index_tool.manifest_url:
+                return index_tool.manifest_url
+        tool_dir = self.workspace / "tools" / tool_id
+        if tool_dir.exists():
+            return str(tool_dir)
+        return ""
 
     def download_toolbox_update(self) -> None:
         update = self.toolbox_update_info

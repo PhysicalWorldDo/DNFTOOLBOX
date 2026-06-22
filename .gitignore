@@ -9,3 +9,6 @@ downloads/
 cache/
 logs/
 tools/
+docs/
+scripts/
+tests/

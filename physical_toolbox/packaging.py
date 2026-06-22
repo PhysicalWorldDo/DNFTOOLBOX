@@ -41,6 +41,7 @@ class ToolPackageSpec:
     permissions: tuple[str, ...] = ()
     need_admin: bool = False
     channel: str = "stable"
+    project_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,7 @@ def _tool_json(spec: ToolPackageSpec, package_url: str) -> dict:
         "icon": "",
         "entry": spec.entry,
         "needAdmin": spec.need_admin,
+        "projectUrl": spec.project_url,
         "latest": {spec.channel: spec.version},
         "versions": [
             {
