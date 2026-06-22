@@ -21,9 +21,10 @@ class AboutInfo:
     title: str
     author: str
     tagline: str
-    qq_group: str
+    qq_number: str
     bilibili_url: str
     github_url: str
+    feedback_url: str
     logs: tuple[AboutLogEntry, ...]
 
 
@@ -32,9 +33,10 @@ def toolbox_about_info() -> AboutInfo:
         title="物理世界的工具箱",
         author="物理世界的欺骗",
         tagline="集中安装、更新、启动和管理 DNF 工具的桌面工具箱。",
-        qq_group="1077552159",
+        qq_number="1548220577",
         bilibili_url="https://space.bilibili.com/492488982",
         github_url="https://github.com/PhysicalWorldDo/DNFTOOLBOX",
+        feedback_url="https://github.com/PhysicalWorldDo/DNFTOOLBOX/issues",
         logs=(
             AboutLogEntry(
                 version="v0.1.0",

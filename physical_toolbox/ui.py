@@ -79,7 +79,7 @@ class AboutPage(QFrame):
         layout.addWidget(
             self._card(
                 "联系方式",
-                f"作者：{self.info.author}\nQQ群：{self.info.qq_group}\nGitHub：{self.info.github_url}",
+                f"作者：{self.info.author}\nQQ号：{self.info.qq_number}\n问题反馈：{self.info.feedback_url}\nGitHub：{self.info.github_url}",
             )
         )
         layout.addWidget(self._log_card())
@@ -108,7 +108,8 @@ class AboutPage(QFrame):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         text_layout.addLayout(button_layout)
-        button_layout.addWidget(self._small_button("复制群号", self.copy_qq_group))
+        button_layout.addWidget(self._small_button("复制QQ号", self.copy_qq_number))
+        button_layout.addWidget(self._small_button("问题反馈", lambda: self.open_url(self.info.feedback_url)))
         button_layout.addWidget(self._small_button("Bilibili", lambda: self.open_url(self.info.bilibili_url)))
         button_layout.addWidget(self._small_button("GitHub", lambda: self.open_url(self.info.github_url)))
         button_layout.addStretch()
@@ -148,9 +149,9 @@ class AboutPage(QFrame):
         button.clicked.connect(callback)
         return button
 
-    def copy_qq_group(self) -> None:
-        QApplication.clipboard().setText(self.info.qq_group)
-        QMessageBox.information(self, "已复制", f"QQ群号 {self.info.qq_group} 已复制到剪贴板。")
+    def copy_qq_number(self) -> None:
+        QApplication.clipboard().setText(self.info.qq_number)
+        QMessageBox.information(self, "已复制", f"QQ号 {self.info.qq_number} 已复制到剪贴板。")
 
     def open_url(self, url: str) -> None:
         QDesktopServices.openUrl(QUrl(url))

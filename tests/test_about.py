@@ -19,8 +19,9 @@ def test_toolbox_about_info_keeps_author_contact_and_release_log() -> None:
 
     assert info.title == "物理世界的工具箱"
     assert info.author == "物理世界的欺骗"
-    assert info.qq_group == "1077552159"
+    assert info.qq_number == "1548220577"
     assert info.bilibili_url.startswith("https://space.bilibili.com/")
     assert info.github_url.endswith("/DNFTOOLBOX")
+    assert info.feedback_url.endswith("/DNFTOOLBOX/issues")
     assert info.logs
     assert info.logs[0].version == "v0.1.0"
