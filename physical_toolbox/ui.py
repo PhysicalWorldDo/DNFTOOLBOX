@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import queue
 import subprocess
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
@@ -36,7 +38,6 @@ from physical_toolbox.repository import RepositoryClient
 from physical_toolbox.tool_grid import ToolTile, build_tool_tiles, default_selected_category, ordered_categories
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
-APP_ICON_PNG_PATH = ASSET_DIR / "toolbox-icon.png"
 APP_ICON_PATH = ASSET_DIR / "toolbox-icon.ico"
 
 
@@ -86,24 +87,13 @@ class AboutPage(QFrame):
     def _hero(self) -> QFrame:
         hero = QFrame()
         hero.setObjectName("aboutHero")
-        layout = QHBoxLayout(hero)
+        layout = QVBoxLayout(hero)
         layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(18)
-
-        icon = QLabel()
-        icon.setObjectName("aboutIcon")
-        icon.setFixedSize(96, 96)
-        icon.setAlignment(Qt.AlignCenter)
-        pixmap = QPixmap(str(APP_ICON_PNG_PATH))
-        if not pixmap.isNull():
-            icon.setPixmap(pixmap.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        else:
-            icon.setText("物")
-        layout.addWidget(icon)
+        layout.setSpacing(10)
 
         text_layout = QVBoxLayout()
         text_layout.setSpacing(8)
-        layout.addLayout(text_layout, 1)
+        layout.addLayout(text_layout)
 
         title = QLabel(self.info.title)
         title.setObjectName("aboutTitle")
@@ -180,6 +170,8 @@ class ToolboxApp(QMainWindow):
         self.selected_category = ""
         self.selected_tool_id: str | None = None
         self._drag_position: QPoint | None = None
+        self._update_queue: queue.Queue[tuple[str, object]] = queue.Queue()
+        self._update_thread: threading.Thread | None = None
 
         self.setWindowTitle(config.name)
         if APP_ICON_PATH.exists():
@@ -209,15 +201,6 @@ class ToolboxApp(QMainWindow):
         side_layout = QVBoxLayout(self.sidebar)
         side_layout.setContentsMargins(0, 22, 0, 12)
         side_layout.setSpacing(0)
-
-        logo = QLabel()
-        logo.setObjectName("sideLogo")
-        logo.setAlignment(Qt.AlignCenter)
-        logo.setFixedHeight(58)
-        pixmap = QPixmap(str(APP_ICON_PNG_PATH))
-        if not pixmap.isNull():
-            logo.setPixmap(pixmap.scaled(52, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        side_layout.addWidget(logo)
 
         title = QLabel(self.config.name)
         title.setObjectName("sideTitle")
@@ -372,11 +355,7 @@ class ToolboxApp(QMainWindow):
             QLabel#sideTitle {
                 color: white;
                 font-size: 20px;
-                min-height: 38px;
-            }
-            QLabel#sideLogo {
-                color: white;
-                font-size: 24px;
+                min-height: 48px;
             }
             QFrame#sideLine {
                 background: rgba(0, 30, 90, 45);
@@ -500,13 +479,6 @@ class ToolboxApp(QMainWindow):
                 background: rgba(255, 255, 255, 32);
                 border: 1px solid rgba(255, 255, 255, 34);
             }
-            QLabel#aboutIcon {
-                background: rgba(255, 255, 255, 18);
-                border: 1px solid rgba(255, 255, 255, 38);
-                color: white;
-                font-size: 34px;
-                font-weight: 800;
-            }
             QLabel#aboutTitle {
                 color: white;
                 font-size: 25px;
@@ -551,22 +523,63 @@ class ToolboxApp(QMainWindow):
         return button
 
     def check_updates(self) -> None:
+        if self._update_thread is not None and self._update_thread.is_alive():
+            self.hint_label.setText("正在检查更新...")
+            return
+
+        self.hint_label.setText("正在检查更新...")
+        self.menu_button.setEnabled(False)
+        self._update_thread = threading.Thread(target=self._load_updates_worker, daemon=True)
+        self._update_thread.start()
+        QTimer.singleShot(50, self._poll_update_queue)
+
+    def _load_updates_worker(self) -> None:
         try:
             index = self.repository.load_index(self.config.index_url)
-            self.index_tools = list(index.tools)
-            self.manifests = {
+            index_tools = list(index.tools)
+            manifests = {
                 item.id: self.repository.load_manifest(item.manifest_url)
-                for item in self.index_tools
+                for item in index_tools
             }
-            self.tiles = build_tool_tiles(
-                self.index_tools,
-                self.manifests,
+            tiles = build_tool_tiles(
+                index_tools,
+                manifests,
                 self.package_manager.installed_tools(),
                 self.config.channel,
             )
         except Exception as exc:
-            self.hint_label.setText(f"清单加载失败：{exc}")
+            self._update_queue.put(("error", exc))
             return
+        self._update_queue.put(("ok", (index_tools, manifests, tiles)))
+
+    def _poll_update_queue(self) -> None:
+        try:
+            status, payload = self._update_queue.get_nowait()
+        except queue.Empty:
+            if self._update_thread is not None and self._update_thread.is_alive():
+                QTimer.singleShot(50, self._poll_update_queue)
+            else:
+                self.menu_button.setEnabled(True)
+            return
+
+        self.menu_button.setEnabled(True)
+        if status == "error":
+            self.hint_label.setText(f"清单加载失败：{payload}")
+            self._sync_action_buttons()
+            return
+
+        index_tools, manifests, tiles = payload  # type: ignore[misc]
+        self._apply_update_result(index_tools, manifests, tiles)
+
+    def _apply_update_result(
+        self,
+        index_tools: list,
+        manifests: dict[str, ToolManifest],
+        tiles: tuple[ToolTile, ...],
+    ) -> None:
+        self.index_tools = index_tools
+        self.manifests = manifests
+        self.tiles = tiles
 
         self._render_categories()
         if self.selected_category == ABOUT_NAV_ID:

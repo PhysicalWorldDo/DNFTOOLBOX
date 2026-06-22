@@ -1,11 +1,26 @@
 import os
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from physical_toolbox.about import ABOUT_NAV_ID
 from physical_toolbox.app_config import AppConfig
-from physical_toolbox.repository import IndexTool
+from physical_toolbox.repository import IndexTool, ToolboxIndex
 from physical_toolbox.ui import ToolboxApp, create_application
+
+
+class SlowRepository:
+    def load_index(self, url: str) -> ToolboxIndex:
+        time.sleep(0.25)
+        return ToolboxIndex(
+            schema_version=1,
+            latest_toolbox_version="0.1.0",
+            min_supported_version="0.1.0",
+            tools=(),
+        )
+
+    def load_manifest(self, url: str):
+        raise AssertionError("No manifests should be loaded for an empty index")
 
 
 def test_about_page_is_fixed_sidebar_destination(tmp_path) -> None:
@@ -26,6 +41,48 @@ def test_about_page_is_fixed_sidebar_destination(tmp_path) -> None:
     assert not window.about_page.isHidden()
     assert window.tool_list.isHidden()
     assert window.detail_bar.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_check_updates_starts_background_load_without_blocking_ui(tmp_path) -> None:
+    app = create_application()
+    config = AppConfig(
+        name="物理世界的工具箱",
+        index_url=(tmp_path / "index.json").resolve().as_uri(),
+        channel="stable",
+    )
+    window = ToolboxApp(tmp_path, config)
+    window.repository = SlowRepository()
+
+    started = time.monotonic()
+    window.check_updates()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.1
+    thread = getattr(window, "_update_thread", None)
+    assert thread is not None
+    thread.join(timeout=1)
+
+    window.close()
+    app.processEvents()
+
+
+def test_generated_icon_is_used_only_as_window_icon_not_internal_artwork(tmp_path) -> None:
+    app = create_application()
+    config = AppConfig(
+        name="物理世界的工具箱",
+        index_url=(tmp_path / "index.json").resolve().as_uri(),
+        channel="stable",
+    )
+    window = ToolboxApp(tmp_path, config)
+    window._render_categories()
+    window.select_about_page()
+
+    assert not window.windowIcon().isNull()
+    assert window.findChild(type(window.hint_label), "sideLogo") is None
+    assert window.about_page.findChild(type(window.hint_label), "aboutIcon") is None
 
     window.close()
     app.processEvents()
