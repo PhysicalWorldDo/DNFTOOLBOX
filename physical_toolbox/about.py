@@ -30,7 +30,7 @@ class AboutInfo:
 def toolbox_about_info() -> AboutInfo:
     return AboutInfo(
         title="物理世界的工具箱",
-        author="物理世界的欧皇",
+        author="物理世界的欺骗",
         tagline="集中安装、更新、启动和管理 DNF 工具的桌面工具箱。",
         qq_group="1077552159",
         bilibili_url="https://space.bilibili.com/492488982",
