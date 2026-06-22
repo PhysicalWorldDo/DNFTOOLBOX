@@ -152,6 +152,8 @@ def test_package_tool_preserves_existing_source_git_directory(tmp_path: Path) ->
     source_repo = output / "sources" / "git_tool"
     (source_repo / ".git").mkdir(parents=True)
     (source_repo / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (source_repo / ".gitignore").write_text("config/\n", encoding="utf-8")
+    (source_repo / "README.md").write_text("README", encoding="utf-8")
     (source_repo / "old.py").write_text("old", encoding="utf-8")
 
     spec = ToolPackageSpec(
@@ -169,6 +171,8 @@ def test_package_tool_preserves_existing_source_git_directory(tmp_path: Path) ->
     package_tool(spec, output)
 
     assert (source_repo / ".git" / "HEAD").exists()
+    assert (source_repo / ".gitignore").read_text(encoding="utf-8") == "config/\n"
+    assert (source_repo / "README.md").read_text(encoding="utf-8") == "README"
     assert (source_repo / "main.py").read_text(encoding="utf-8") == "print('new')"
     assert not (source_repo / "old.py").exists()
 
@@ -206,10 +210,98 @@ def test_local_tool_specs_do_not_ship_user_config_files() -> None:
 def test_video_codec_tool_uses_dist_ffmpeg_bundle() -> None:
     spec = next(item for item in base_specs() if item.id == "neople_video_codec_tool")
 
-    ffmpeg_copies = [
-        copy for copy in (*spec.runtime_copies, *spec.source_copies)
-        if Path(copy.destination).name == "ffmpeg"
+    runtime_ffmpeg_copies = [
+        copy for copy in spec.runtime_copies
+        if Path(copy.destination).as_posix() == "bin/app/ffmpeg"
+    ]
+    source_ffmpeg_copies = [
+        copy for copy in spec.source_copies
+        if "ffmpeg" in Path(copy.destination).parts
     ]
 
-    assert ffmpeg_copies
-    assert all(copy.source.parts[-2:] == ("dist", "ffmpeg") for copy in ffmpeg_copies)
+    assert runtime_ffmpeg_copies
+    assert all(copy.source.parts[-2:] == ("dist", "ffmpeg") for copy in runtime_ffmpeg_copies)
+    assert source_ffmpeg_copies == []
+
+
+def test_music_runtime_directory_filters_generated_payloads(tmp_path: Path) -> None:
+    app_dir = tmp_path / "MusicNpkTool.dist"
+    (app_dir / "bin").mkdir(parents=True)
+    (app_dir / "recordings").mkdir()
+    (app_dir / "DNFMusicDetect.exe").write_text("exe", encoding="utf-8")
+    (app_dir / "dnf_music_index.sqlite").write_text("index", encoding="utf-8")
+    (app_dir / "recordings" / "sample.wav").write_text("wav", encoding="utf-8")
+    (app_dir / "bin" / "ffmpeg.exe").write_text("ffmpeg", encoding="utf-8")
+    (app_dir / "bin" / "ffplay.exe").write_text("ffplay", encoding="utf-8")
+    (app_dir / "bin" / "ffprobe.exe").write_text("ffprobe", encoding="utf-8")
+
+    output = tmp_path / "out"
+    spec = ToolPackageSpec(
+        id="music_tool",
+        name="Music Tool",
+        category="Audio",
+        description="Filters generated music assets",
+        version="1.0.0",
+        entry="bin/run.cmd",
+        runtime_copies=(FileCopy(app_dir, "bin/app"),),
+        launch_target="DNFMusicDetect.exe",
+    )
+
+    result = package_tool(spec, output)
+
+    with zipfile.ZipFile(result.package_path) as archive:
+        names = set(archive.namelist())
+
+    assert "bin/app/DNFMusicDetect.exe" in names
+    assert "bin/app/bin/ffmpeg.exe" in names
+    assert "bin/app/bin/ffplay.exe" in names
+    assert "bin/app/bin/ffprobe.exe" not in names
+    assert "bin/app/dnf_music_index.sqlite" not in names
+    assert "bin/app/recordings/sample.wav" not in names
+
+
+def test_palette_split_specs_copy_only_required_modules_and_assets() -> None:
+    expected_modules = {
+        "dnf_palette_prism": "mod_prism.py",
+        "dnf_palette_blender": "mod_blender.py",
+        "dnf_palette_recolor": "mod_recolor.py",
+        "dnf_palette_buff": "mod_buff.py",
+        "dnf_palette_ai_search": "mod_ai.py",
+    }
+    model_names = {"mobilenet_v3_small.onnx", "mobilenet_v3_small.pth"}
+    all_page_modules = {
+        "mod_about.py",
+        "mod_ai.py",
+        "mod_blender.py",
+        "mod_buff.py",
+        "mod_prism.py",
+        "mod_recolor.py",
+    }
+
+    for tool_id, expected_module in expected_modules.items():
+        spec = next(item for item in base_specs() if item.id == tool_id)
+        copy_destinations = {
+            Path(copy.destination).as_posix()
+            for copy in (*spec.runtime_copies, *spec.source_copies)
+        }
+        generated_files = {
+            Path(generated.destination).as_posix(): generated.content
+            for generated in (*spec.runtime_files, *spec.source_files)
+        }
+        copied_names = {Path(destination).name for destination in copy_destinations}
+
+        assert "bin/app/modules" not in copy_destinations
+        assert "modules" not in copy_destinations
+        assert "dnf_ImagePacks2.txt" not in copied_names
+        assert expected_module in copied_names
+        assert copied_names.isdisjoint(all_page_modules - {expected_module})
+
+        if tool_id == "dnf_palette_ai_search":
+            assert model_names.issubset(copied_names)
+        else:
+            assert copied_names.isdisjoint(model_names)
+
+        assert "bin/app/main.py" in generated_files
+        assert "main.py" in generated_files
+        assert 'self.show_page("about")' not in generated_files["bin/app/main.py"]
+        assert 'self.show_page("about")' not in generated_files["main.py"]

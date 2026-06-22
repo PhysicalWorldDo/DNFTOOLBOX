@@ -352,6 +352,42 @@ def patched_palette_common() -> str:
     )
 
 
+def patched_palette_main() -> str:
+    text = (PALETTE_ROOT / "main.py").read_text(encoding="utf-8")
+    patched = text.replace(
+        '        self.show_page("about")',
+        "        # Packaged single-page launchers open the selected page explicitly.",
+    )
+    if patched == text:
+        raise RuntimeError("Unable to patch default palette page")
+    return patched
+
+
+def palette_module_copies(page_key: str, destination_root: str) -> tuple[FileCopy, ...]:
+    module_name = "mod_ai.py" if page_key in {"google", "train"} else f"mod_{page_key}.py"
+    prefix = f"{destination_root}/" if destination_root else ""
+    copies = [
+        FileCopy(PALETTE_ROOT / "modules" / "__init__.py", f"{prefix}modules/__init__.py"),
+        FileCopy(PALETTE_ROOT / "modules" / module_name, f"{prefix}modules/{module_name}"),
+    ]
+    if page_key in {"prism", "blender", "recolor"}:
+        copies.extend(
+            [
+                FileCopy(PALETTE_ROOT / "NpkPatcher.exe", f"{prefix}NpkPatcher.exe"),
+                FileCopy(PALETTE_ROOT / "zlib1.dll", f"{prefix}zlib1.dll"),
+            ]
+        )
+    return tuple(copies)
+
+
+def palette_ai_model_copies(destination_root: str) -> tuple[FileCopy, ...]:
+    prefix = f"{destination_root}/" if destination_root else ""
+    return (
+        FileCopy(PALETTE_ROOT / "mobilenet_v3_small.onnx", f"{prefix}mobilenet_v3_small.onnx"),
+        FileCopy(PALETTE_ROOT / "mobilenet_v3_small.pth", f"{prefix}mobilenet_v3_small.pth"),
+    )
+
+
 def open_directory_launcher() -> str:
     return """@echo off
 cd /d "%~dp0"
@@ -367,39 +403,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 
 
 
 def base_specs() -> list[ToolPackageSpec]:
-    common_palette_runtime = (
-        FileCopy(PALETTE_ROOT / "main.py", "bin/app/main.py"),
-        FileCopy(PALETTE_ROOT / "modules", "bin/app/modules"),
-        FileCopy(PALETTE_ROOT / "avatar.jpg", "bin/app/avatar.jpg"),
-        FileCopy(PALETTE_ROOT / "Background.jpeg", "bin/app/Background.jpeg"),
-        FileCopy(PALETTE_ROOT / "Background.png", "bin/app/Background.png"),
-        FileCopy(PALETTE_ROOT / "dnf_ImagePacks2.txt", "bin/app/dnf_ImagePacks2.txt"),
-        FileCopy(PALETTE_ROOT / "mobilenet_v3_small.onnx", "bin/app/mobilenet_v3_small.onnx"),
-        FileCopy(PALETTE_ROOT / "mobilenet_v3_small.pth", "bin/app/mobilenet_v3_small.pth"),
-        FileCopy(PALETTE_ROOT / "NpkPatcher.exe", "bin/app/NpkPatcher.exe"),
-        FileCopy(PALETTE_ROOT / "Palette.ico", "bin/app/Palette.ico"),
-        FileCopy(PALETTE_ROOT / "qrcode.png", "bin/app/qrcode.png"),
-        FileCopy(PALETTE_ROOT / "zlib1.dll", "bin/app/zlib1.dll"),
-    )
-    common_palette_source = (
-        FileCopy(PALETTE_ROOT / "main.py", "main.py"),
-        FileCopy(PALETTE_ROOT / "modules", "modules"),
-        FileCopy(PALETTE_ROOT / "avatar.jpg", "assets/avatar.jpg"),
-        FileCopy(PALETTE_ROOT / "Background.jpeg", "assets/Background.jpeg"),
-        FileCopy(PALETTE_ROOT / "Background.png", "assets/Background.png"),
-        FileCopy(PALETTE_ROOT / "dnf_ImagePacks2.txt", "assets/dnf_ImagePacks2.txt"),
-        FileCopy(PALETTE_ROOT / "mobilenet_v3_small.onnx", "assets/mobilenet_v3_small.onnx"),
-        FileCopy(PALETTE_ROOT / "mobilenet_v3_small.pth", "assets/mobilenet_v3_small.pth"),
-        FileCopy(PALETTE_ROOT / "NpkPatcher.exe", "assets/NpkPatcher.exe"),
-        FileCopy(PALETTE_ROOT / "Palette.ico", "assets/Palette.ico"),
-        FileCopy(PALETTE_ROOT / "qrcode.png", "assets/qrcode.png"),
-        FileCopy(PALETTE_ROOT / "zlib1.dll", "assets/zlib1.dll"),
-    )
+    common_palette_runtime: tuple[FileCopy, ...] = ()
+    common_palette_source: tuple[FileCopy, ...] = ()
     palette_runtime_files = (
+        GeneratedFile("bin/app/main.py", patched_palette_main()),
         GeneratedFile("bin/app/common.py", patched_palette_common()),
         GeneratedFile("bin/app/launch.cmd", python_gui_launcher("single_page_launcher.py")),
     )
     palette_source_files = (
+        GeneratedFile("main.py", patched_palette_main()),
         GeneratedFile("common.py", patched_palette_common()),
         GeneratedFile("launch.cmd", python_gui_launcher("single_page_launcher.py")),
     )
@@ -418,7 +430,6 @@ def base_specs() -> list[ToolPackageSpec]:
             ),
             source_copies=(
                 FileCopy(DECRYPT_ROOT / "decrypt_ui.py", "decrypt_ui.py"),
-                FileCopy(DECRYPT_ROOT / "dist" / "ffmpeg", "ffmpeg"),
             ),
             runtime_files=(GeneratedFile("bin/app/launch.cmd", python_gui_launcher("decrypt_ui.py")),),
             source_files=(GeneratedFile("launch.cmd", python_gui_launcher("decrypt_ui.py")),),
@@ -604,8 +615,8 @@ def palette_spec(
         description=description,
         version="1.0.0",
         entry="bin/run.cmd",
-        runtime_copies=runtime_copies,
-        source_copies=source_copies,
+        runtime_copies=runtime_copies + palette_module_copies(page_key, "bin/app"),
+        source_copies=source_copies + palette_module_copies(page_key, ""),
         runtime_files=runtime_files
         + (GeneratedFile("bin/app/single_page_launcher.py", palette_single_page_launcher(page_key, name)),),
         source_files=source_files
@@ -630,8 +641,12 @@ def ai_search_spec(
         version="1.0.0",
         entry="bin/run.cmd",
         runtime_copies=runtime_copies
+        + palette_module_copies("google", "bin/app")
+        + palette_ai_model_copies("bin/app")
         + (FileCopy(PALETTE_ROOT.parent / "RunTrain_exe.py", "bin/app/RunTrain_exe.py"),),
         source_copies=source_copies
+        + palette_module_copies("google", "")
+        + palette_ai_model_copies("")
         + (FileCopy(PALETTE_ROOT.parent / "RunTrain_exe.py", "RunTrain_exe.py"),),
         runtime_files=runtime_files
         + (

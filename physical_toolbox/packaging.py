@@ -223,7 +223,10 @@ def _ignore_packaging_noise(_directory: str, names: list[str]) -> set[str]:
         "output",
         "temp_process",
         "_temp_blender_try",
+        "dnf_music_index.sqlite",
+        "ffprobe.exe",
         "music_tool_settings.json",
+        "recordings",
         "run_config.json",
         "settings.json",
         "settings.local.json",
@@ -240,6 +243,7 @@ def _replace_dir(path: Path) -> None:
 
 
 def _replace_source_dir(path: Path) -> None:
+    preserved = {".git", ".gitignore", "README.md"}
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
         return
@@ -247,7 +251,7 @@ def _replace_source_dir(path: Path) -> None:
         _replace_dir(path)
         return
     for child in path.iterdir():
-        if child.name == ".git":
+        if child.name in preserved:
             continue
         if child.is_dir():
             shutil.rmtree(child)
