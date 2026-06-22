@@ -10,7 +10,10 @@ from physical_toolbox.ui import ToolboxApp, create_application
 
 
 class SlowRepository:
+    started = False
+
     def load_index(self, url: str) -> ToolboxIndex:
+        self.started = True
         time.sleep(0.25)
         return ToolboxIndex(
             schema_version=1,
@@ -41,6 +44,28 @@ def test_about_page_is_fixed_sidebar_destination(tmp_path) -> None:
     assert not window.about_page.isHidden()
     assert window.tool_list.isHidden()
     assert window.detail_bar.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_window_constructs_complete_initial_ui_before_update_starts(tmp_path) -> None:
+    app = create_application()
+    config = AppConfig(
+        name="物理世界的工具箱",
+        index_url=(tmp_path / "index.json").resolve().as_uri(),
+        channel="stable",
+    )
+    repository = SlowRepository()
+
+    window = ToolboxApp(tmp_path, config)
+    window.repository = repository
+
+    assert ABOUT_NAV_ID in window.category_buttons
+    assert not window.about_page.isHidden()
+    assert window.tool_list.isHidden()
+    assert getattr(window, "_update_thread", None) is None
+    assert not repository.started
 
     window.close()
     app.processEvents()

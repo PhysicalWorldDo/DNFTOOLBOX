@@ -172,6 +172,7 @@ class ToolboxApp(QMainWindow):
         self._drag_position: QPoint | None = None
         self._update_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self._update_thread: threading.Thread | None = None
+        self._auto_update_started = False
 
         self.setWindowTitle(config.name)
         if APP_ICON_PATH.exists():
@@ -182,7 +183,7 @@ class ToolboxApp(QMainWindow):
         self.setAttribute(Qt.WA_TranslucentBackground, False)
 
         self._build_ui()
-        QTimer.singleShot(80, self.check_updates)
+        self._render_initial_ui()
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -522,12 +523,24 @@ class ToolboxApp(QMainWindow):
         button.setFocusPolicy(Qt.NoFocus)
         return button
 
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if self._auto_update_started:
+            return
+        self._auto_update_started = True
+        QTimer.singleShot(800, self.check_updates)
+
+    def _render_initial_ui(self) -> None:
+        self._render_categories()
+        self.select_about_page()
+        self.hint_label.setText("工具箱已启动，稍后将在后台检查更新。")
+
     def check_updates(self) -> None:
         if self._update_thread is not None and self._update_thread.is_alive():
-            self.hint_label.setText("正在检查更新...")
+            self.hint_label.setText("后台检查更新中...")
             return
 
-        self.hint_label.setText("正在检查更新...")
+        self.hint_label.setText("后台检查更新中...")
         self.menu_button.setEnabled(False)
         self._update_thread = threading.Thread(target=self._load_updates_worker, daemon=True)
         self._update_thread.start()
