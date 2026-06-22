@@ -56,6 +56,7 @@ class SelfUpdateRunner:
             cwd=str(self.workspace),
             creationflags=creation_flags,
             close_fds=True,
+            env=_sanitized_update_environment(),
         )
         return plan
 
@@ -109,6 +110,10 @@ class SelfUpdateRunner:
                 "    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $InstallDir $_.Name) -Recurse -Force",
                 "  }",
                 "  Write-Log 'Restarting toolbox'",
+                "  Write-Log 'Resetting PyInstaller environment'",
+                "  Get-ChildItem Env: | Where-Object { $_.Name -like '_PYI_*' } | ForEach-Object {",
+                "    Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue",
+                "  }",
                 "  $env:PYINSTALLER_RESET_ENVIRONMENT = '1'",
                 f"  Start-Process -FilePath {_ps_quote(restart_command[0])}{argument_list} -WorkingDirectory $InstallDir",
                 "  Write-Log 'Update completed'",
@@ -133,6 +138,12 @@ def default_restart_command(workspace: Path) -> tuple[str, ...]:
     if getattr(sys, "frozen", False):
         return (sys.executable,)
     return (sys.executable, str(workspace / "toolbox.py"))
+
+
+def _sanitized_update_environment() -> dict[str, str]:
+    env = {key: value for key, value in os.environ.items() if not key.startswith("_PYI_")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
 
 
 def _ps_quote(value: str) -> str:
