@@ -109,6 +109,7 @@ class SelfUpdateRunner:
                 "    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $InstallDir $_.Name) -Recurse -Force",
                 "  }",
                 "  Write-Log 'Restarting toolbox'",
+                "  $env:PYINSTALLER_RESET_ENVIRONMENT = '1'",
                 f"  Start-Process -FilePath {_ps_quote(restart_command[0])}{argument_list} -WorkingDirectory $InstallDir",
                 "  Write-Log 'Update completed'",
                 "}",
