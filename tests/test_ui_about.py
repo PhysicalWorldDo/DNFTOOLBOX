@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 from physical_toolbox.about import ABOUT_NAV_ID
 from physical_toolbox.app_config import AppConfig
 from physical_toolbox.install_state import InstalledTool, InstallStateStore
-from physical_toolbox.repository import IndexTool, ToolboxIndex
+from physical_toolbox.repository import IndexTool, ToolboxIndex, ToolboxUpdate
 from physical_toolbox.ui import ToolboxApp, create_application
 
 
@@ -157,6 +157,36 @@ def test_check_updates_starts_background_load_without_blocking_ui(tmp_path) -> N
     thread = getattr(window, "_update_thread", None)
     assert thread is not None
     thread.join(timeout=1)
+
+    window.close()
+    app.processEvents()
+
+
+def test_toolbox_update_notice_does_not_interrupt_loaded_tools(tmp_path) -> None:
+    app = create_application()
+    config = AppConfig(
+        name="物理世界的工具箱",
+        index_url=(tmp_path / "index.json").resolve().as_uri(),
+        channel="stable",
+    )
+    window = ToolboxApp(tmp_path, config)
+    window.index_tools = [IndexTool("demo", "演示工具", "游戏工具", "demo.json")]
+    window.tiles = ()
+    window._render_categories()
+    window.select_category("游戏工具")
+
+    update = ToolboxUpdate(
+        latest_version="0.2.0",
+        min_supported_version="0.1.0",
+        release_url="https://github.com/PhysicalWorldDo/DNFTOOLBOX/releases/tag/v0.2.0",
+        package_url="https://github.com/PhysicalWorldDo/DNFTOOLBOX/releases/download/v0.2.0/PhysicalWorldToolbox-0.2.0-win-x64.zip",
+    )
+
+    window._apply_update_result(update, window.index_tools, {}, ())
+
+    assert window.selected_category == "游戏工具"
+    assert window.toolbox_update_info == update
+    assert "0.2.0" in window.hint_label.text()
 
     window.close()
     app.processEvents()

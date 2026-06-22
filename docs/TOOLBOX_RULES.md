@@ -46,14 +46,22 @@ PhysicalWorldToolbox-Index/
     equipment_compare.json
 ```
 
-工具箱启动或用户点击“检查更新”时，先读取 `index.json`。`index.json` 只负责总入口，不放具体版本包信息。
+工具箱启动或用户点击“检查更新”时，先读取 `index.json`。`index.json` 负责总入口、工具箱本体更新信息和工具 manifest 引用；具体工具版本包信息仍放在各工具 manifest 中。
 
 ```json
 {
   "schemaVersion": 1,
   "toolbox": {
     "latestVersion": "1.0.0",
-    "minSupportedVersion": "1.0.0"
+    "minSupportedVersion": "1.0.0",
+    "releaseUrl": "https://github.com/PhysicalWorldDo/DNFTOOLBOX/releases/tag/v1.0.0",
+    "packageUrl": "https://github.com/PhysicalWorldDo/DNFTOOLBOX/releases/download/v1.0.0/PhysicalWorldToolbox-1.0.0-win-x64.zip",
+    "sha256": "填写工具箱安装包 sha256",
+    "size": 52428800,
+    "changelog": [
+      "新增工具箱本体更新提示",
+      "支持下载并校验新版工具箱安装包"
+    ]
   },
   "tools": [
     {
@@ -192,6 +200,24 @@ PhysicalWorldToolbox/
 → 保留 config/ 和 data/
 → 更新 config/installed.json
 ```
+
+## 工具箱本体更新流程
+
+工具箱本体更新信息放在远程 `index.json` 的 `toolbox` 节点中，工具箱安装包放在 `DNFTOOLBOX` 仓库的 GitHub Releases。
+
+```text
+启动工具箱或点击检查更新
+→ 后台拉取 index.json
+→ 对比当前工具箱版本和 toolbox.latestVersion
+→ 如有新版本，在顶部提示“发现工具箱新版本”
+→ 用户点击右上角菜单
+→ 可选择打开 Release 页面或下载工具箱更新
+→ 下载 zip 到 downloads/
+→ 校验 toolbox.sha256
+→ 提示用户关闭当前工具箱后安装新版
+```
+
+工具箱启动时不得因为本体更新检查阻断 UI，也不得因为远程检查失败影响本地已安装工具的启动和使用。第一阶段不在运行中直接覆盖工具箱自身文件；后续如需自动替换，应使用独立 updater 进程在主程序退出后完成替换。
 
 ## 回退流程
 

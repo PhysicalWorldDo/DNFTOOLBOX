@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QProgressBar,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from physical_toolbox import __version__
 from physical_toolbox.about import ABOUT_NAV_ID, ABOUT_NAV_LABEL, toolbox_about_info
 from physical_toolbox.app_config import AppConfig
 from physical_toolbox.fonts import candidate_cjk_font_paths
@@ -35,7 +37,8 @@ from physical_toolbox.install_state import InstallStateStore
 from physical_toolbox.launching import launch_entry
 from physical_toolbox.manifest import ToolManifest
 from physical_toolbox.package_manager import PackageManager
-from physical_toolbox.repository import IndexTool, RepositoryClient
+from physical_toolbox.repository import IndexTool, RepositoryClient, ToolboxUpdate
+from physical_toolbox.toolbox_update import ToolboxUpdateDownloader, is_toolbox_update_available
 from physical_toolbox.tool_grid import ToolTile, build_tool_tiles, default_selected_category, ordered_categories
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
@@ -165,9 +168,11 @@ class ToolboxApp(QMainWindow):
         self.repository = RepositoryClient()
         self.state_store = InstallStateStore(workspace / "config" / "installed.json")
         self.package_manager = PackageManager(workspace, self.state_store)
+        self.toolbox_update_downloader = ToolboxUpdateDownloader(workspace)
         self.index_tools = []
         self.manifests: dict[str, ToolManifest] = {}
         self.tiles: tuple[ToolTile, ...] = ()
+        self.toolbox_update_info: ToolboxUpdate | None = None
         self.category_buttons: dict[str, QPushButton] = {}
         self.selected_category = ""
         self.selected_tool_id: str | None = None
@@ -226,7 +231,7 @@ class ToolboxApp(QMainWindow):
         bottom_line.setFixedHeight(1)
         side_layout.addWidget(bottom_line)
 
-        version = QLabel("Version : 0.1.0")
+        version = QLabel(f"Version : {__version__}")
         version.setObjectName("sideVersion")
         version.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(version)
@@ -254,7 +259,7 @@ class ToolboxApp(QMainWindow):
         hint_layout.addWidget(self.hint_label)
 
         self.menu_button = self._window_button("≡")
-        self.menu_button.clicked.connect(self.check_updates)
+        self.menu_button.clicked.connect(self.show_app_menu)
         top_bar.addWidget(self.menu_button)
 
         self.min_button = self._window_button("-")
@@ -525,6 +530,34 @@ class ToolboxApp(QMainWindow):
         button.setFocusPolicy(Qt.NoFocus)
         return button
 
+    def show_app_menu(self) -> None:
+        menu = QMenu(self)
+
+        check_action = QAction("检查更新", self)
+        check_action.triggered.connect(self.check_updates)
+        menu.addAction(check_action)
+
+        if self.toolbox_update_info is not None:
+            download_action = QAction(f"下载工具箱 {self.toolbox_update_info.latest_version}", self)
+            download_action.setEnabled(bool(self.toolbox_update_info.package_url))
+            download_action.triggered.connect(self.download_toolbox_update)
+            menu.addAction(download_action)
+
+            release_action = QAction("打开新版发布页", self)
+            release_action.setEnabled(bool(self.toolbox_update_info.release_url))
+            release_action.triggered.connect(self.open_toolbox_release)
+            menu.addAction(release_action)
+        else:
+            current_action = QAction("工具箱已是当前版本", self)
+            current_action.setEnabled(False)
+            menu.addAction(current_action)
+
+        feedback_action = QAction("问题反馈", self)
+        feedback_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(toolbox_about_info().feedback_url)))
+        menu.addAction(feedback_action)
+
+        menu.exec(self.menu_button.mapToGlobal(self.menu_button.rect().bottomLeft()))
+
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         if self._auto_update_started:
@@ -605,7 +638,7 @@ class ToolboxApp(QMainWindow):
         except Exception as exc:
             self._update_queue.put(("error", exc))
             return
-        self._update_queue.put(("ok", (index_tools, manifests, tiles)))
+        self._update_queue.put(("ok", (index.toolbox_update, index_tools, manifests, tiles)))
 
     def _poll_update_queue(self) -> None:
         try:
@@ -623,15 +656,21 @@ class ToolboxApp(QMainWindow):
             self._sync_action_buttons()
             return
 
-        index_tools, manifests, tiles = payload  # type: ignore[misc]
-        self._apply_update_result(index_tools, manifests, tiles)
+        toolbox_update, index_tools, manifests, tiles = payload  # type: ignore[misc]
+        self._apply_update_result(toolbox_update, index_tools, manifests, tiles)
 
     def _apply_update_result(
         self,
+        toolbox_update: ToolboxUpdate,
         index_tools: list,
         manifests: dict[str, ToolManifest],
         tiles: tuple[ToolTile, ...],
     ) -> None:
+        self.toolbox_update_info = (
+            toolbox_update
+            if is_toolbox_update_available(toolbox_update, __version__)
+            else None
+        )
         self.index_tools = index_tools
         self.manifests = manifests
         self.tiles = tiles
@@ -643,9 +682,55 @@ class ToolboxApp(QMainWindow):
             self.select_category(default_selected_category(ordered_categories(self.index_tools), self.tiles))
         else:
             self.select_category(self.selected_category)
-        if self.selected_category != ABOUT_NAV_ID:
+        if self.toolbox_update_info is not None:
+            self.hint_label.setText(
+                f"发现工具箱新版本 {self.toolbox_update_info.latest_version}，点击右上角菜单下载更新。"
+            )
+        elif self.selected_category != ABOUT_NAV_ID:
             self.hint_label.setText(f"提示：已加载 {len(self.tiles)} 个工具。单击查看说明，双击启动工具。")
         self._sync_action_buttons()
+
+    def open_toolbox_release(self) -> None:
+        if self.toolbox_update_info is None or not self.toolbox_update_info.release_url:
+            return
+        QDesktopServices.openUrl(QUrl(self.toolbox_update_info.release_url))
+
+    def download_toolbox_update(self) -> None:
+        update = self.toolbox_update_info
+        if update is None:
+            QMessageBox.information(self, "没有新版本", "当前工具箱已经是最新版本。")
+            return
+        if not update.package_url:
+            self.open_toolbox_release()
+            return
+
+        try:
+            self.menu_button.setEnabled(False)
+            self._set_busy(True)
+            self._show_progress("准备下载工具箱更新...")
+            package_path = self.toolbox_update_downloader.download(
+                update,
+                progress_callback=self._update_download_progress,
+            )
+        except Exception as exc:
+            self._show_progress("工具箱更新下载失败")
+            QMessageBox.critical(self, "下载失败", str(exc))
+            return
+        finally:
+            self._set_busy(False)
+            self.menu_button.setEnabled(True)
+
+        self._show_progress("完成")
+        self.hint_label.setText(f"工具箱 {update.latest_version} 已下载：{package_path.name}。请关闭工具箱后安装新版。")
+        result = QMessageBox.question(
+            self,
+            "下载完成",
+            f"新版工具箱已下载到：\n{package_path}\n\n是否打开下载目录？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if result == QMessageBox.Yes:
+            subprocess.Popen(["explorer", f"/select,{package_path}"])
 
     def _render_categories(self) -> None:
         for button in self.category_buttons.values():

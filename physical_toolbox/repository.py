@@ -3,11 +3,40 @@ from __future__ import annotations
 import json
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from physical_toolbox.manifest import ToolManifest
+
+
+@dataclass(frozen=True)
+class ToolboxUpdate:
+    latest_version: str = ""
+    min_supported_version: str = ""
+    release_url: str = ""
+    package_url: str = ""
+    sha256: str = ""
+    size: int | None = None
+    changelog: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], base_url: str = "") -> "ToolboxUpdate":
+        release_url = str(data.get("releaseUrl", ""))
+        package_url = str(data.get("packageUrl", ""))
+        if base_url and release_url:
+            release_url = _resolve_url(base_url, release_url)
+        if base_url and package_url:
+            package_url = _resolve_url(base_url, package_url)
+        return cls(
+            latest_version=str(data.get("latestVersion", "")),
+            min_supported_version=str(data.get("minSupportedVersion", "")),
+            release_url=release_url,
+            package_url=package_url,
+            sha256=str(data.get("sha256", "")),
+            size=data.get("size"),
+            changelog=tuple(str(item) for item in data.get("changelog", [])),
+        )
 
 
 @dataclass(frozen=True)
@@ -36,15 +65,18 @@ class ToolboxIndex:
     latest_toolbox_version: str
     min_supported_version: str
     tools: tuple[IndexTool, ...]
+    toolbox_update: ToolboxUpdate = field(default_factory=ToolboxUpdate)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], base_url: str = "") -> "ToolboxIndex":
         toolbox = data.get("toolbox", {})
+        toolbox_update = ToolboxUpdate.from_dict(toolbox, base_url)
         return cls(
             schema_version=int(data.get("schemaVersion", 1)),
-            latest_toolbox_version=str(toolbox.get("latestVersion", "")),
-            min_supported_version=str(toolbox.get("minSupportedVersion", "")),
+            latest_toolbox_version=toolbox_update.latest_version,
+            min_supported_version=toolbox_update.min_supported_version,
             tools=tuple(IndexTool.from_dict(item, base_url) for item in data.get("tools", [])),
+            toolbox_update=toolbox_update,
         )
 
 

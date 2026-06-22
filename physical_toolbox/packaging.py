@@ -124,6 +124,10 @@ def write_index(output_root: Path, tool_ids: Iterable[str]) -> Path:
         "toolbox": {
             "latestVersion": "0.1.0",
             "minSupportedVersion": "0.1.0",
+            "releaseUrl": "https://github.com/PhysicalWorldDo/DNFTOOLBOX/releases",
+            "packageUrl": "",
+            "sha256": "",
+            "changelog": [],
         },
         "tools": tools,
     }

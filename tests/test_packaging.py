@@ -61,6 +61,10 @@ def test_write_index_references_each_tool_manifest(tmp_path: Path) -> None:
     index_path = write_index(tmp_path, ["demo_tool"])
 
     index = json.loads(index_path.read_text(encoding="utf-8"))
+    assert index["toolbox"]["releaseUrl"] == "https://github.com/PhysicalWorldDo/DNFTOOLBOX/releases"
+    assert index["toolbox"]["packageUrl"] == ""
+    assert index["toolbox"]["sha256"] == ""
+    assert index["toolbox"]["changelog"] == []
     assert index["tools"] == [
         {
             "id": "demo_tool",

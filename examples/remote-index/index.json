@@ -2,7 +2,11 @@
   "schemaVersion": 1,
   "toolbox": {
     "latestVersion": "0.1.0",
-    "minSupportedVersion": "0.1.0"
+    "minSupportedVersion": "0.1.0",
+    "releaseUrl": "https://github.com/PhysicalWorldDo/DNFTOOLBOX/releases",
+    "packageUrl": "",
+    "sha256": "",
+    "changelog": []
   },
   "tools": [
     {
