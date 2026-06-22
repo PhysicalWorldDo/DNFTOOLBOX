@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DEFAULT_INDEX_URL = "https://raw.githubusercontent.com/PhysicalWorldDo/DNFTOOLBOX-Registry/main/index.json"
+DEFAULT_INDEX_URL = "https://github.com/PhysicalWorldDo/DNFTOOLBOX-Registry/raw/refs/heads/main/index.json"
+LEGACY_RAW_INDEX_URL = "https://raw.githubusercontent.com/PhysicalWorldDo/DNFTOOLBOX-Registry/main/index.json"
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,7 @@ def load_or_create_config(workspace: Path) -> AppConfig:
         return config
 
     config = AppConfig.from_dict(json.loads(path.read_text(encoding="utf-8")), workspace)
-    if _uses_missing_old_example_index(config.index_url):
+    if _uses_missing_old_example_index(config.index_url) or _uses_legacy_raw_index(config.index_url):
         config = AppConfig(name=config.name, index_url=DEFAULT_INDEX_URL, channel=config.channel)
         _save_config(path, config)
     return config
@@ -63,3 +64,7 @@ def _uses_missing_old_example_index(index_url: str) -> bool:
     if not normalized.endswith("/examples/remote-index/index.json"):
         return False
     return not Path(index_url).exists()
+
+
+def _uses_legacy_raw_index(index_url: str) -> bool:
+    return index_url.rstrip("/").lower() == LEGACY_RAW_INDEX_URL.lower()
