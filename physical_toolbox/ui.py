@@ -44,6 +44,7 @@ from physical_toolbox.tool_grid import ToolTile, build_tool_tiles, default_selec
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
 APP_ICON_PATH = ASSET_DIR / "toolbox-icon.ico"
+MAX_UPDATE_WORKERS = 8
 
 
 class AboutPage(QFrame):
@@ -239,6 +240,20 @@ class ToolboxApp(QMainWindow):
         version.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(version)
 
+        self.side_update_status = QLabel("")
+        self.side_update_status.setObjectName("sideUpdateStatus")
+        self.side_update_status.setAlignment(Qt.AlignCenter)
+        self.side_update_status.setVisible(False)
+        side_layout.addWidget(self.side_update_status)
+
+        self.side_update_progress = QProgressBar()
+        self.side_update_progress.setObjectName("sideUpdateProgress")
+        self.side_update_progress.setRange(0, 100)
+        self.side_update_progress.setValue(0)
+        self.side_update_progress.setTextVisible(False)
+        self.side_update_progress.setVisible(False)
+        side_layout.addWidget(self.side_update_progress)
+
         main = QFrame()
         main.setObjectName("main")
         layout.addWidget(main, 1)
@@ -377,6 +392,24 @@ class ToolboxApp(QMainWindow):
                 color: white;
                 font-size: 14px;
                 min-height: 36px;
+            }
+            QLabel#sideUpdateStatus {
+                color: rgba(235, 252, 255, 220);
+                font-size: 11px;
+                min-height: 18px;
+                max-height: 18px;
+            }
+            QProgressBar#sideUpdateProgress {
+                margin-left: 58px;
+                margin-right: 58px;
+                margin-bottom: 8px;
+                background: rgba(255, 255, 255, 45);
+                border: 0;
+                min-height: 5px;
+                max-height: 5px;
+            }
+            QProgressBar#sideUpdateProgress::chunk {
+                background: rgba(83, 227, 178, 220);
             }
             QPushButton#categoryButton {
                 background: transparent;
@@ -633,10 +666,13 @@ class ToolboxApp(QMainWindow):
 
     def check_updates(self) -> None:
         if self._update_thread is not None and self._update_thread.is_alive():
+            self._show_update_activity("检查更新中...", None, None)
             self.hint_label.setText("后台检查更新中...")
             return
 
         self.hint_label.setText("后台检查更新中...")
+        self._clear_update_queue()
+        self._show_update_activity("连接更新源...", None, None)
         self.menu_button.setEnabled(False)
         self._update_thread = threading.Thread(target=self._load_updates_worker, daemon=True)
         self._update_thread.start()
@@ -644,12 +680,11 @@ class ToolboxApp(QMainWindow):
 
     def _load_updates_worker(self) -> None:
         try:
+            self._update_queue.put(("progress", ("连接更新源...", None, None)))
             index = self.repository.load_index(self.config.index_url)
             index_tools = list(index.tools)
-            manifests = {
-                item.id: self.repository.load_manifest(item.manifest_url)
-                for item in index_tools
-            }
+            manifests = self._load_manifests_concurrently(index_tools)
+            self._update_queue.put(("progress", ("整理工具列表...", len(index_tools), len(index_tools))))
             tiles = build_tool_tiles(
                 index_tools,
                 manifests,
@@ -661,6 +696,58 @@ class ToolboxApp(QMainWindow):
             return
         self._update_queue.put(("ok", (index.toolbox_update, index_tools, manifests, tiles)))
 
+    def _load_manifests_concurrently(self, index_tools: list[IndexTool]) -> dict[str, ToolManifest]:
+        if not index_tools:
+            return {}
+
+        total = len(index_tools)
+        done = 0
+        manifests: dict[str, ToolManifest] = {}
+        worker_count = min(MAX_UPDATE_WORKERS, total)
+        self._update_queue.put(("progress", (f"加载工具清单 0/{total}", 0, total)))
+
+        work_queue: queue.Queue[IndexTool] = queue.Queue()
+        result_queue: queue.Queue[tuple[str, str, object]] = queue.Queue()
+
+        for item in index_tools:
+            work_queue.put(item)
+
+        def worker() -> None:
+            while True:
+                try:
+                    item = work_queue.get_nowait()
+                except queue.Empty:
+                    return
+
+                try:
+                    manifest = self.repository.load_manifest(item.manifest_url)
+                except Exception as exc:
+                    result_queue.put(("error", item.id, exc))
+                else:
+                    result_queue.put(("ok", item.id, manifest))
+                finally:
+                    work_queue.task_done()
+
+        for _ in range(worker_count):
+            thread = threading.Thread(target=worker, daemon=True)
+            thread.start()
+
+        first_error: tuple[str, Exception] | None = None
+        while done < total:
+            status, tool_id, value = result_queue.get()
+            done += 1
+            if status == "ok":
+                manifests[tool_id] = value  # type: ignore[assignment]
+            elif first_error is None and isinstance(value, Exception):
+                first_error = (tool_id, value)
+            self._update_queue.put(("progress", (f"加载工具清单 {done}/{total}", done, total)))
+
+        if first_error is not None:
+            tool_id, error = first_error
+            raise RuntimeError(f"{tool_id}: {error}") from error
+
+        return manifests
+
     def _poll_update_queue(self) -> None:
         try:
             status, payload = self._update_queue.get_nowait()
@@ -669,15 +756,24 @@ class ToolboxApp(QMainWindow):
                 QTimer.singleShot(50, self._poll_update_queue)
             else:
                 self.menu_button.setEnabled(True)
+                self._hide_update_activity()
+            return
+
+        if status == "progress":
+            text, current, total = payload  # type: ignore[misc]
+            self._show_update_activity(str(text), current, total)
+            QTimer.singleShot(80, self._poll_update_queue)
             return
 
         self.menu_button.setEnabled(True)
         if status == "error":
+            self._finish_update_activity("检查失败", success=False)
             self.hint_label.setText(f"清单加载失败：{payload}")
             self._sync_action_buttons()
             return
 
         toolbox_update, index_tools, manifests, tiles = payload  # type: ignore[misc]
+        self._finish_update_activity("检查完成", success=True)
         self._apply_update_result(toolbox_update, index_tools, manifests, tiles)
 
     def _apply_update_result(
@@ -963,6 +1059,41 @@ class ToolboxApp(QMainWindow):
         self.launch_button.setEnabled(is_installed)
         self.open_dir_button.setEnabled(is_installed)
         self.uninstall_button.setEnabled(is_installed)
+
+    def _clear_update_queue(self) -> None:
+        while True:
+            try:
+                self._update_queue.get_nowait()
+            except queue.Empty:
+                return
+
+    def _show_update_activity(self, text: str, current: object, total: object) -> None:
+        self.side_update_status.setText(text)
+        self.side_update_status.setVisible(True)
+        self.side_update_progress.setVisible(True)
+
+        if isinstance(current, int) and isinstance(total, int) and total > 0:
+            self.side_update_progress.setRange(0, total)
+            self.side_update_progress.setValue(min(current, total))
+            return
+
+        self.side_update_progress.setRange(0, 0)
+
+    def _finish_update_activity(self, text: str, *, success: bool) -> None:
+        self.side_update_status.setText(text)
+        self.side_update_status.setVisible(True)
+        self.side_update_progress.setVisible(True)
+        self.side_update_progress.setRange(0, 100)
+        self.side_update_progress.setValue(100 if success else 0)
+        QTimer.singleShot(1600 if success else 3000, self._hide_update_activity)
+
+    def _hide_update_activity(self) -> None:
+        if self._update_thread is not None and self._update_thread.is_alive():
+            return
+        self.side_update_status.setVisible(False)
+        self.side_update_progress.setVisible(False)
+        self.side_update_progress.setRange(0, 100)
+        self.side_update_progress.setValue(0)
 
     def _show_progress(self, text: str) -> None:
         self.progress_bar.setVisible(True)

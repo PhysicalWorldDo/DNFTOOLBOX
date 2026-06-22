@@ -10,6 +10,9 @@ from typing import Any
 from physical_toolbox.manifest import ToolManifest
 
 
+DEFAULT_REQUEST_TIMEOUT = 10
+
+
 @dataclass(frozen=True)
 class ToolboxUpdate:
     latest_version: str = ""
@@ -81,6 +84,9 @@ class ToolboxIndex:
 
 
 class RepositoryClient:
+    def __init__(self, timeout: int = DEFAULT_REQUEST_TIMEOUT) -> None:
+        self.timeout = timeout
+
     def load_index(self, url: str) -> ToolboxIndex:
         data = self._load_json(url)
         return ToolboxIndex.from_dict(data, url)
@@ -91,7 +97,11 @@ class RepositoryClient:
     def _load_json(self, url: str) -> dict[str, Any]:
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme in {"http", "https"}:
-            with urllib.request.urlopen(url, timeout=30) as response:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "PhysicalWorldToolbox/1.0"},
+            )
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8")
         elif parsed.scheme == "file":
             raw = Path(urllib.request.url2pathname(parsed.path)).read_text(encoding="utf-8")
