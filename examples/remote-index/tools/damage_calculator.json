@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "damage_calculator",
+  "name": "伤害计算器",
+  "category": "角色工具",
+  "description": "用于计算角色装备、词条、增益后的伤害。",
+  "icon": "",
+  "entry": "bin/DamageCalculator.exe",
+  "needAdmin": false,
+  "latest": {
+    "stable": "1.2.0",
+    "beta": "1.3.0-beta.1"
+  },
+  "versions": [
+    {
+      "version": "1.2.0",
+      "channel": "stable",
+      "releaseDate": "2026-06-22",
+      "packageUrl": "https://github.com/your-name/PhysicalWorldToolbox-Packages/releases/download/damage_calculator-v1.2.0/damage_calculator-1.2.0-win-x64.zip",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 15728640,
+      "changelog": [
+        "新增自定义词条计算",
+        "修复部分装备加成错误"
+      ],
+      "minToolboxVersion": "0.1.0"
+    },
+    {
+      "version": "1.1.0",
+      "channel": "stable",
+      "releaseDate": "2026-05-20",
+      "packageUrl": "https://github.com/your-name/PhysicalWorldToolbox-Packages/releases/download/damage_calculator-v1.1.0/damage_calculator-1.1.0-win-x64.zip",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 14000000,
+      "changelog": [
+        "基础计算功能"
+      ],
+      "minToolboxVersion": "0.1.0"
+    },
+    {
+      "version": "1.3.0-beta.1",
+      "channel": "beta",
+      "releaseDate": "2026-06-22",
+      "packageUrl": "https://github.com/your-name/PhysicalWorldToolbox-Packages/releases/download/damage_calculator-v1.3.0-beta.1/damage_calculator-1.3.0-beta.1-win-x64.zip",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "size": 16000000,
+      "changelog": [
+        "测试新版词条模型"
+      ],
+      "minToolboxVersion": "0.1.0"
+    }
+  ],
+  "permissions": ["network"],
+  "tags": ["计算", "装备", "角色"],
+  "status": "active",
+  "blockedVersions": []
+}

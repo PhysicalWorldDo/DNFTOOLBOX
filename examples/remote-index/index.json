@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "toolbox": {
+    "latestVersion": "0.1.0",
+    "minSupportedVersion": "0.1.0"
+  },
+  "tools": [
+    {
+      "id": "damage_calculator",
+      "name": "伤害计算器",
+      "category": "角色工具",
+      "manifestUrl": "tools/damage_calculator.json"
+    },
+    {
+      "id": "screenshot_helper",
+      "name": "截图助手",
+      "category": "游戏工具",
+      "manifestUrl": "tools/screenshot_helper.json"
+    }
+  ]
+}
