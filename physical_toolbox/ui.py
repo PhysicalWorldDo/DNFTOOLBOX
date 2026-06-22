@@ -3,8 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -18,12 +18,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressBar,
+    QScrollArea,
     QSizePolicy,
     QStyle,
     QVBoxLayout,
     QWidget,
 )
 
+from physical_toolbox.about import ABOUT_NAV_ID, ABOUT_NAV_LABEL, toolbox_about_info
 from physical_toolbox.app_config import AppConfig
 from physical_toolbox.fonts import candidate_cjk_font_paths
 from physical_toolbox.install_state import InstallStateStore
@@ -32,6 +34,135 @@ from physical_toolbox.manifest import ToolManifest
 from physical_toolbox.package_manager import PackageManager
 from physical_toolbox.repository import RepositoryClient
 from physical_toolbox.tool_grid import ToolTile, build_tool_tiles, default_selected_category, ordered_categories
+
+ASSET_DIR = Path(__file__).resolve().parent / "assets"
+APP_ICON_PNG_PATH = ASSET_DIR / "toolbox-icon.png"
+APP_ICON_PATH = ASSET_DIR / "toolbox-icon.ico"
+
+
+class AboutPage(QFrame):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.info = toolbox_about_info()
+        self.setObjectName("aboutPage")
+
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("aboutScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        page_layout.addWidget(scroll)
+
+        content = QWidget()
+        content.setObjectName("aboutContent")
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(4, 4, 12, 4)
+        layout.setSpacing(14)
+
+        layout.addWidget(self._hero())
+        layout.addWidget(
+            self._card(
+                "工具箱说明",
+                (
+                    "这是一个集中管理 DNF 工具的桌面工具箱，用来统一处理工具下载、安装、更新、启动和卸载。\n"
+                    "每个工具都按独立 manifest 和 GitHub Release 安装包管理，更新内容由远程 registry 提供。"
+                ),
+            )
+        )
+        layout.addWidget(
+            self._card(
+                "联系方式",
+                f"作者：{self.info.author}\nQQ群：{self.info.qq_group}\nGitHub：{self.info.github_url}",
+            )
+        )
+        layout.addWidget(self._log_card())
+        layout.addStretch()
+
+    def _hero(self) -> QFrame:
+        hero = QFrame()
+        hero.setObjectName("aboutHero")
+        layout = QHBoxLayout(hero)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(18)
+
+        icon = QLabel()
+        icon.setObjectName("aboutIcon")
+        icon.setFixedSize(96, 96)
+        icon.setAlignment(Qt.AlignCenter)
+        pixmap = QPixmap(str(APP_ICON_PNG_PATH))
+        if not pixmap.isNull():
+            icon.setPixmap(pixmap.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            icon.setText("物")
+        layout.addWidget(icon)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(8)
+        layout.addLayout(text_layout, 1)
+
+        title = QLabel(self.info.title)
+        title.setObjectName("aboutTitle")
+        text_layout.addWidget(title)
+
+        tagline = QLabel(self.info.tagline)
+        tagline.setObjectName("aboutTagline")
+        tagline.setWordWrap(True)
+        text_layout.addWidget(tagline)
+
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
+        text_layout.addLayout(button_layout)
+        button_layout.addWidget(self._small_button("复制群号", self.copy_qq_group))
+        button_layout.addWidget(self._small_button("Bilibili", lambda: self.open_url(self.info.bilibili_url)))
+        button_layout.addWidget(self._small_button("GitHub", lambda: self.open_url(self.info.github_url)))
+        button_layout.addStretch()
+
+        return hero
+
+    def _card(self, title: str, body: str) -> QFrame:
+        card = QFrame()
+        card.setObjectName("aboutCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("aboutCardTitle")
+        layout.addWidget(title_label)
+
+        body_label = QLabel(body)
+        body_label.setObjectName("aboutCardText")
+        body_label.setWordWrap(True)
+        body_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(body_label)
+        return card
+
+    def _log_card(self) -> QFrame:
+        text = []
+        for entry in self.info.logs:
+            text.append(f"{entry.version}  {entry.date}")
+            text.extend(f"  - {item}" for item in entry.items)
+            text.append("")
+        return self._card("更新日志", "\n".join(text).strip())
+
+    def _small_button(self, text: str, callback) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("aboutButton")
+        button.setCursor(Qt.PointingHandCursor)
+        button.clicked.connect(callback)
+        return button
+
+    def copy_qq_group(self) -> None:
+        QApplication.clipboard().setText(self.info.qq_group)
+        QMessageBox.information(self, "已复制", f"QQ群号 {self.info.qq_group} 已复制到剪贴板。")
+
+    def open_url(self, url: str) -> None:
+        QDesktopServices.openUrl(QUrl(url))
 
 
 class ToolboxApp(QMainWindow):
@@ -51,6 +182,8 @@ class ToolboxApp(QMainWindow):
         self._drag_position: QPoint | None = None
 
         self.setWindowTitle(config.name)
+        if APP_ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self.resize(1280, 750)
         self.setMinimumSize(1020, 620)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
@@ -76,6 +209,15 @@ class ToolboxApp(QMainWindow):
         side_layout = QVBoxLayout(self.sidebar)
         side_layout.setContentsMargins(0, 22, 0, 12)
         side_layout.setSpacing(0)
+
+        logo = QLabel()
+        logo.setObjectName("sideLogo")
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setFixedHeight(58)
+        pixmap = QPixmap(str(APP_ICON_PNG_PATH))
+        if not pixmap.isNull():
+            logo.setPixmap(pixmap.scaled(52, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        side_layout.addWidget(logo)
 
         title = QLabel(self.config.name)
         title.setObjectName("sideTitle")
@@ -153,6 +295,10 @@ class ToolboxApp(QMainWindow):
         self.tool_list.itemDoubleClicked.connect(self._launch_item)
         main_layout.addWidget(self.tool_list, 1)
 
+        self.about_page = AboutPage()
+        self.about_page.setVisible(False)
+        main_layout.addWidget(self.about_page, 1)
+
         self.detail_bar = QFrame()
         self.detail_bar.setObjectName("detailBar")
         self.detail_bar.setFixedHeight(112)
@@ -226,7 +372,11 @@ class ToolboxApp(QMainWindow):
             QLabel#sideTitle {
                 color: white;
                 font-size: 20px;
-                min-height: 48px;
+                min-height: 38px;
+            }
+            QLabel#sideLogo {
+                color: white;
+                font-size: 24px;
             }
             QFrame#sideLine {
                 background: rgba(0, 30, 90, 45);
@@ -339,6 +489,57 @@ class ToolboxApp(QMainWindow):
             QProgressBar#downloadProgress::chunk {
                 background: rgba(83, 227, 178, 210);
             }
+            QFrame#aboutPage, QWidget#aboutContent {
+                background: transparent;
+            }
+            QScrollArea#aboutScroll {
+                background: transparent;
+                border: 0;
+            }
+            QFrame#aboutHero {
+                background: rgba(255, 255, 255, 32);
+                border: 1px solid rgba(255, 255, 255, 34);
+            }
+            QLabel#aboutIcon {
+                background: rgba(255, 255, 255, 18);
+                border: 1px solid rgba(255, 255, 255, 38);
+                color: white;
+                font-size: 34px;
+                font-weight: 800;
+            }
+            QLabel#aboutTitle {
+                color: white;
+                font-size: 25px;
+                font-weight: 800;
+            }
+            QLabel#aboutTagline {
+                color: rgba(235, 252, 255, 225);
+                font-size: 14px;
+            }
+            QPushButton#aboutButton {
+                background: rgba(255, 255, 255, 226);
+                border: 0;
+                color: #11536f;
+                min-width: 78px;
+                min-height: 30px;
+                font-weight: 700;
+            }
+            QPushButton#aboutButton:hover {
+                background: white;
+            }
+            QFrame#aboutCard {
+                background: rgba(255, 255, 255, 26);
+                border-top: 1px solid rgba(255, 255, 255, 30);
+            }
+            QLabel#aboutCardTitle {
+                color: white;
+                font-size: 16px;
+                font-weight: 800;
+            }
+            QLabel#aboutCardText {
+                color: rgba(235, 252, 255, 230);
+                font-size: 13px;
+            }
             """
         )
 
@@ -368,11 +569,14 @@ class ToolboxApp(QMainWindow):
             return
 
         self._render_categories()
-        if not self.selected_category:
+        if self.selected_category == ABOUT_NAV_ID:
+            self.select_about_page()
+        elif not self.selected_category:
             self.select_category(default_selected_category(ordered_categories(self.index_tools), self.tiles))
         else:
             self.select_category(self.selected_category)
-        self.hint_label.setText(f"提示：已加载 {len(self.tiles)} 个工具。单击查看说明，双击启动工具。")
+        if self.selected_category != ABOUT_NAV_ID:
+            self.hint_label.setText(f"提示：已加载 {len(self.tiles)} 个工具。单击查看说明，双击启动工具。")
         self._sync_action_buttons()
 
     def _render_categories(self) -> None:
@@ -389,11 +593,37 @@ class ToolboxApp(QMainWindow):
             self.category_panel.addWidget(button)
             self.category_buttons[category] = button
 
+        button = QPushButton(ABOUT_NAV_LABEL)
+        button.setObjectName("categoryButton")
+        button.setCheckable(True)
+        button.setCursor(Qt.PointingHandCursor)
+        button.clicked.connect(self.select_about_page)
+        self.category_panel.addWidget(button)
+        self.category_buttons[ABOUT_NAV_ID] = button
+
     def select_category(self, category: str) -> None:
+        if category == ABOUT_NAV_ID:
+            self.select_about_page()
+            return
         self.selected_category = category
         for name, button in self.category_buttons.items():
             button.setChecked(name == category)
+        self.about_page.setVisible(False)
+        self.tool_list.setVisible(True)
+        self.detail_bar.setVisible(True)
         self._render_tools(category)
+
+    def select_about_page(self) -> None:
+        self.selected_category = ABOUT_NAV_ID
+        self.selected_tool_id = None
+        for name, button in self.category_buttons.items():
+            button.setChecked(name == ABOUT_NAV_ID)
+        self.tool_list.setVisible(False)
+        self.detail_bar.setVisible(False)
+        self.about_page.setVisible(True)
+        self.progress_bar.setVisible(False)
+        self.hint_label.setText("关于页：查看工具箱说明、作者信息和更新日志。")
+        self._sync_action_buttons()
 
     def _render_tools(self, category: str) -> None:
         self.tool_list.clear()
