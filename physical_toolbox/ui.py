@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import queue
 import subprocess
 import threading
@@ -34,7 +35,7 @@ from physical_toolbox.install_state import InstallStateStore
 from physical_toolbox.launching import launch_entry
 from physical_toolbox.manifest import ToolManifest
 from physical_toolbox.package_manager import PackageManager
-from physical_toolbox.repository import RepositoryClient
+from physical_toolbox.repository import IndexTool, RepositoryClient
 from physical_toolbox.tool_grid import ToolTile, build_tool_tiles, default_selected_category, ordered_categories
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
@@ -531,9 +532,49 @@ class ToolboxApp(QMainWindow):
         QTimer.singleShot(800, self.check_updates)
 
     def _render_initial_ui(self) -> None:
+        if self._load_local_tools():
+            self.hint_label.setText("本地工具已就绪，稍后将在后台检查更新。")
+            return
+
         self._render_categories()
         self.select_about_page()
         self.hint_label.setText("工具箱已启动，稍后将在后台检查更新。")
+
+    def _load_local_tools(self) -> bool:
+        installed_tools = self.package_manager.installed_tools()
+        index_tools: list[IndexTool] = []
+        manifests: dict[str, ToolManifest] = {}
+
+        for tool_id in sorted(installed_tools):
+            manifest_path = self.workspace / "tools" / tool_id / "tool.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                manifest = ToolManifest.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+            if manifest.id != tool_id:
+                continue
+            manifests[manifest.id] = manifest
+            index_tools.append(
+                IndexTool(
+                    id=manifest.id,
+                    name=manifest.name,
+                    category=manifest.category,
+                    manifest_url=str(manifest_path),
+                )
+            )
+
+        tiles = build_tool_tiles(index_tools, manifests, installed_tools, self.config.channel)
+        self.index_tools = index_tools
+        self.manifests = manifests
+        self.tiles = tiles
+        if not tiles:
+            return False
+
+        self._render_categories()
+        self.select_category(default_selected_category(ordered_categories(self.index_tools), self.tiles))
+        return True
 
     def check_updates(self) -> None:
         if self._update_thread is not None and self._update_thread.is_alive():

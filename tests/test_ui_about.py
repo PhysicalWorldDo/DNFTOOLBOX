@@ -3,8 +3,11 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
+
 from physical_toolbox.about import ABOUT_NAV_ID
 from physical_toolbox.app_config import AppConfig
+from physical_toolbox.install_state import InstalledTool, InstallStateStore
 from physical_toolbox.repository import IndexTool, ToolboxIndex
 from physical_toolbox.ui import ToolboxApp, create_application
 
@@ -64,6 +67,71 @@ def test_window_constructs_complete_initial_ui_before_update_starts(tmp_path) ->
     assert ABOUT_NAV_ID in window.category_buttons
     assert not window.about_page.isHidden()
     assert window.tool_list.isHidden()
+    assert getattr(window, "_update_thread", None) is None
+    assert not repository.started
+
+    window.close()
+    app.processEvents()
+
+
+def test_window_loads_installed_tools_before_background_update_starts(tmp_path) -> None:
+    app = create_application()
+    tool_dir = tmp_path / "tools" / "demo_tool"
+    tool_dir.mkdir(parents=True)
+    (tool_dir / "run.cmd").write_text("@echo off\n", encoding="utf-8")
+    (tool_dir / "tool.json").write_text(
+        """
+        {
+          "schemaVersion": 1,
+          "id": "demo_tool",
+          "name": "本地演示工具",
+          "category": "游戏工具",
+          "description": "已经安装在本地的工具",
+          "icon": "",
+          "entry": "run.cmd",
+          "needAdmin": false,
+          "latest": {"stable": "1.0.0"},
+          "versions": [
+            {
+              "version": "1.0.0",
+              "channel": "stable",
+              "packageUrl": "",
+              "sha256": ""
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    InstallStateStore(tmp_path / "config" / "installed.json").save(
+        {
+            "demo_tool": InstalledTool(
+                id="demo_tool",
+                name="本地演示工具",
+                version="1.0.0",
+                channel="stable",
+                entry="run.cmd",
+                installed_at="2026-06-22T12:00:00+08:00",
+                updated_at="2026-06-22T12:00:00+08:00",
+            )
+        }
+    )
+    config = AppConfig(
+        name="物理世界的工具箱",
+        index_url=(tmp_path / "index.json").resolve().as_uri(),
+        channel="stable",
+    )
+    repository = SlowRepository()
+
+    window = ToolboxApp(tmp_path, config)
+    window.repository = repository
+
+    assert "游戏工具" in window.category_buttons
+    assert window.selected_category == "游戏工具"
+    assert window.tool_list.count() == 1
+    assert window.tool_list.item(0).data(Qt.UserRole) == "demo_tool"
+    window._select_item(window.tool_list.item(0))
+    assert window.launch_button.isEnabled()
     assert getattr(window, "_update_thread", None) is None
     assert not repository.started
 
