@@ -414,11 +414,11 @@ def base_specs() -> list[ToolPackageSpec]:
             entry="bin/run.cmd",
             runtime_copies=(
                 FileCopy(DECRYPT_ROOT / "decrypt_ui.py", "bin/app/decrypt_ui.py"),
-                FileCopy(DECRYPT_ROOT / "ffmpeg", "bin/app/ffmpeg"),
+                FileCopy(DECRYPT_ROOT / "dist" / "ffmpeg", "bin/app/ffmpeg"),
             ),
             source_copies=(
                 FileCopy(DECRYPT_ROOT / "decrypt_ui.py", "decrypt_ui.py"),
-                FileCopy(DECRYPT_ROOT / "ffmpeg", "ffmpeg"),
+                FileCopy(DECRYPT_ROOT / "dist" / "ffmpeg", "ffmpeg"),
             ),
             runtime_files=(GeneratedFile("bin/app/launch.cmd", python_gui_launcher("decrypt_ui.py")),),
             source_files=(GeneratedFile("launch.cmd", python_gui_launcher("decrypt_ui.py")),),

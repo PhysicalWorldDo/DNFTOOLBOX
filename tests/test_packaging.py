@@ -143,6 +143,36 @@ def test_package_tool_filters_local_config_when_copying_directories(tmp_path: Pa
     assert not (output / "sources" / "directory_tool" / "app" / ".claude").exists()
 
 
+def test_package_tool_preserves_existing_source_git_directory(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "main.py").write_text("print('new')", encoding="utf-8")
+
+    output = tmp_path / "out"
+    source_repo = output / "sources" / "git_tool"
+    (source_repo / ".git").mkdir(parents=True)
+    (source_repo / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (source_repo / "old.py").write_text("old", encoding="utf-8")
+
+    spec = ToolPackageSpec(
+        id="git_tool",
+        name="Git 工具",
+        category="游戏工具",
+        description="测试保留源码仓库",
+        version="1.0.0",
+        entry="bin/run.cmd",
+        runtime_copies=(FileCopy(source / "main.py", "bin/app/main.py"),),
+        source_copies=(FileCopy(source / "main.py", "main.py"),),
+        launch_target="main.py",
+    )
+
+    package_tool(spec, output)
+
+    assert (source_repo / ".git" / "HEAD").exists()
+    assert (source_repo / "main.py").read_text(encoding="utf-8") == "print('new')"
+    assert not (source_repo / "old.py").exists()
+
+
 def test_one_step_run_tool_is_named_as_running_tool() -> None:
     spec = next(item for item in base_specs() if item.id == "one_step_run")
 
@@ -171,3 +201,15 @@ def test_local_tool_specs_do_not_ship_user_config_files() -> None:
         }
         assert copied_names.isdisjoint(config_names)
         assert generated_names.isdisjoint(config_names)
+
+
+def test_video_codec_tool_uses_dist_ffmpeg_bundle() -> None:
+    spec = next(item for item in base_specs() if item.id == "neople_video_codec_tool")
+
+    ffmpeg_copies = [
+        copy for copy in (*spec.runtime_copies, *spec.source_copies)
+        if Path(copy.destination).name == "ffmpeg"
+    ]
+
+    assert ffmpeg_copies
+    assert all(copy.source.parts[-2:] == ("dist", "ffmpeg") for copy in ffmpeg_copies)

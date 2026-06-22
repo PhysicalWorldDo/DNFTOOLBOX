@@ -59,7 +59,7 @@ def package_tool(spec: ToolPackageSpec, output_root: Path) -> PackagedTool:
     manifest_dir = output_root / "index" / "tools"
 
     _replace_dir(stage_dir)
-    _replace_dir(source_dir)
+    _replace_source_dir(source_dir)
     package_dir.mkdir(parents=True, exist_ok=True)
     manifest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -237,6 +237,22 @@ def _replace_dir(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
+
+
+def _replace_source_dir(path: Path) -> None:
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+        return
+    if not (path / ".git").exists():
+        _replace_dir(path)
+        return
+    for child in path.iterdir():
+        if child.name == ".git":
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
 
 
 def _zip_dir(source_dir: Path, package_path: Path) -> None:
