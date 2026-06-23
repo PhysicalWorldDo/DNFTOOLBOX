@@ -53,6 +53,15 @@ def toolbox_about_info() -> AboutInfo:
         ),
         logs=(
             AboutLogEntry(
+                version="v0.1.7",
+                date="2026-06-24",
+                items=(
+                    "新增 GitHub 公共加速代理配置，检查更新和下载安装包会自动按代理列表回退。",
+                    "右上角菜单新增下载代理设置，支持启用、关闭、修改代理站和恢复默认。",
+                    "启动时不再自动检查更新，需要时可从右上角菜单手动检查。",
+                ),
+            ),
+            AboutLogEntry(
                 version="v0.1.6",
                 date="2026-06-23",
                 items=(

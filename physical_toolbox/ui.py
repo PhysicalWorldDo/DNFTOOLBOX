@@ -10,7 +10,10 @@ from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -20,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QProgressBar,
     QScrollArea,
@@ -31,7 +35,8 @@ from PySide6.QtWidgets import (
 
 from physical_toolbox import __version__
 from physical_toolbox.about import ABOUT_NAV_ID, ABOUT_NAV_LABEL, toolbox_about_info
-from physical_toolbox.app_config import AppConfig
+from physical_toolbox.app_config import AppConfig, DEFAULT_GITHUB_PROXY_URLS, save_config
+from physical_toolbox.github_proxy import normalize_proxy_urls
 from physical_toolbox.fonts import candidate_cjk_font_paths
 from physical_toolbox.install_state import InstallStateStore
 from physical_toolbox.launching import launch_entry
@@ -212,15 +217,66 @@ class AboutPage(QFrame):
         QDesktopServices.openUrl(QUrl(url))
 
 
+class ProxySettingsDialog(QDialog):
+    def __init__(self, config: AppConfig, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("下载代理设置")
+        self.setMinimumWidth(560)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        self.enabled_checkbox = QCheckBox("启用 GitHub 公共加速代理")
+        self.enabled_checkbox.setChecked(config.github_proxy_enabled)
+        layout.addWidget(self.enabled_checkbox)
+
+        hint = QLabel("每行填写一个代理站。普通前缀会自动拼接 GitHub 原始地址，也支持 {url} 或 {encoded_url} 模板。")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.proxy_edit = QPlainTextEdit()
+        self.proxy_edit.setPlaceholderText("https://ghfast.top/")
+        self.proxy_edit.setPlainText("\n".join(config.github_proxy_urls))
+        self.proxy_edit.setMinimumHeight(180)
+        layout.addWidget(self.proxy_edit)
+
+        actions = QHBoxLayout()
+        restore_button = QPushButton("恢复默认代理")
+        restore_button.clicked.connect(self.restore_defaults)
+        actions.addWidget(restore_button)
+        actions.addStretch()
+
+        buttons = QDialogButtonBox()
+        save_button = buttons.addButton("保存", QDialogButtonBox.AcceptRole)
+        cancel_button = buttons.addButton("取消", QDialogButtonBox.RejectRole)
+        save_button.setDefault(True)
+        cancel_button.setAutoDefault(False)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        actions.addWidget(buttons)
+        layout.addLayout(actions)
+
+    def restore_defaults(self) -> None:
+        self.enabled_checkbox.setChecked(True)
+        self.proxy_edit.setPlainText("\n".join(DEFAULT_GITHUB_PROXY_URLS))
+
+    def proxy_enabled(self) -> bool:
+        return self.enabled_checkbox.isChecked()
+
+    def proxy_urls(self) -> tuple[str, ...]:
+        return normalize_proxy_urls(self.proxy_edit.toPlainText().splitlines())
+
+
 class ToolboxApp(QMainWindow):
     def __init__(self, workspace: Path, config: AppConfig) -> None:
         super().__init__()
         self.workspace = workspace
         self.config = config
-        self.repository = RepositoryClient()
+        self.repository = RepositoryClient(proxy_config=config.github_proxy_config())
         self.state_store = InstallStateStore(workspace / "config" / "installed.json")
-        self.package_manager = PackageManager(workspace, self.state_store)
-        self.toolbox_update_downloader = ToolboxUpdateDownloader(workspace)
+        self.package_manager = PackageManager(workspace, self.state_store, proxy_config=config.github_proxy_config())
+        self.toolbox_update_downloader = ToolboxUpdateDownloader(workspace, proxy_config=config.github_proxy_config())
         self.self_update_runner = SelfUpdateRunner(workspace)
         self.index_tools = []
         self.manifests: dict[str, ToolManifest] = {}
@@ -232,7 +288,6 @@ class ToolboxApp(QMainWindow):
         self._drag_position: QPoint | None = None
         self._update_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self._update_thread: threading.Thread | None = None
-        self._auto_update_started = False
         self._startup_about_pending_remote = False
 
         self.setWindowTitle(config.name)
@@ -642,6 +697,10 @@ class ToolboxApp(QMainWindow):
         check_action.triggered.connect(self.check_updates)
         menu.addAction(check_action)
 
+        proxy_action = QAction("下载代理设置", self)
+        proxy_action.triggered.connect(self.configure_github_proxy)
+        menu.addAction(proxy_action)
+
         if self.toolbox_update_info is not None:
             download_action = QAction(f"下载工具箱 {self.toolbox_update_info.latest_version}", self)
             download_action.setEnabled(bool(self.toolbox_update_info.package_url))
@@ -663,6 +722,25 @@ class ToolboxApp(QMainWindow):
 
         menu.exec(self.menu_button.mapToGlobal(self.menu_button.rect().bottomLeft()))
 
+    def configure_github_proxy(self) -> None:
+        dialog = ProxySettingsDialog(self.config, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        self.config = self.config.with_github_proxy(
+            enabled=dialog.proxy_enabled(),
+            urls=dialog.proxy_urls(),
+        )
+        save_config(self.workspace, self.config)
+        self._apply_network_config()
+        self.hint_label.setText("下载代理设置已保存，后续检查更新和下载会使用新配置。")
+
+    def _apply_network_config(self) -> None:
+        proxy_config = self.config.github_proxy_config()
+        self.repository.proxy_config = proxy_config
+        self.package_manager.proxy_config = proxy_config
+        self.toolbox_update_downloader = ToolboxUpdateDownloader(self.workspace, proxy_config=proxy_config)
+
     def show_tool_context_menu(self, position: QPoint) -> None:
         item = self.tool_list.itemAt(position)
         if item is None:
@@ -679,21 +757,17 @@ class ToolboxApp(QMainWindow):
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
-        if self._auto_update_started:
-            return
-        self._auto_update_started = True
-        QTimer.singleShot(800, self.check_updates)
 
     def _render_initial_ui(self) -> None:
         if self._load_local_tools():
             self._startup_about_pending_remote = False
-            self.hint_label.setText("本地工具已就绪，稍后将在后台检查更新。")
+            self.hint_label.setText("本地工具已就绪。需要更新时可在右上角菜单手动检查。")
             return
 
         self._render_categories()
         self.select_about_page()
         self._startup_about_pending_remote = True
-        self.hint_label.setText("工具箱已启动，稍后将在后台检查更新。")
+        self.hint_label.setText("工具箱已启动。可在右上角菜单手动检查更新。")
 
     def _load_local_tools(self) -> bool:
         installed_tools = self.package_manager.installed_tools()

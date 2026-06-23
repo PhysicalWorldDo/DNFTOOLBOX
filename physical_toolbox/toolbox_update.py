@@ -4,6 +4,7 @@ import hashlib
 import urllib.parse
 from pathlib import Path
 
+from physical_toolbox.github_proxy import GitHubProxyConfig
 from physical_toolbox.install_state import InstallStateStore
 from physical_toolbox.manifest import VersionKey
 from physical_toolbox.package_manager import PackageManager, ProgressCallback
@@ -20,11 +21,12 @@ def is_toolbox_update_available(update: ToolboxUpdate, current_version: str) -> 
 
 
 class ToolboxUpdateDownloader:
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, proxy_config: GitHubProxyConfig | None = None) -> None:
         self.workspace = workspace
         self.package_manager = PackageManager(
             workspace,
             InstallStateStore(workspace / "config" / "installed.json"),
+            proxy_config=proxy_config,
         )
 
     def download(
@@ -39,6 +41,7 @@ class ToolboxUpdateDownloader:
             update.package_url,
             filename=self._filename(update),
             progress_callback=progress_callback,
+            expected_sha256=update.sha256,
         )
         self._verify_sha256(package_path, update.sha256)
         return package_path

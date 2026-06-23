@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
+from physical_toolbox.github_proxy import GitHubProxyConfig, github_url_candidates
 from physical_toolbox.install_state import InstalledTool, InstallStateStore
 from physical_toolbox.manifest import ToolManifest
 
@@ -17,9 +18,15 @@ ProgressCallback = Callable[[int, int | None], None]
 
 
 class PackageManager:
-    def __init__(self, workspace: Path, state_store: InstallStateStore) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        state_store: InstallStateStore,
+        proxy_config: GitHubProxyConfig | None = None,
+    ) -> None:
         self.workspace = workspace
         self.state_store = state_store
+        self.proxy_config = proxy_config or GitHubProxyConfig(enabled=False, proxy_urls=())
         self.tools_dir = workspace / "tools"
         self.downloads_dir = workspace / "downloads"
         self.installing_dir = workspace / "cache" / "installing"
@@ -32,6 +39,7 @@ class PackageManager:
         url: str,
         filename: str | None = None,
         progress_callback: ProgressCallback | None = None,
+        expected_sha256: str = "",
     ) -> Path:
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         parsed = urllib.parse.urlparse(url)
@@ -41,12 +49,33 @@ class PackageManager:
         if parsed.scheme == "file":
             source = Path(urllib.request.url2pathname(parsed.path))
             self._copy_file_with_progress(source, target, progress_callback)
+            try:
+                self._verify_sha256(target, expected_sha256)
+            except Exception:
+                self._remove_path(target, ignore_errors=True)
+                raise
             return target
 
-        with urllib.request.urlopen(url, timeout=60) as response:
-            total = response.headers.get("Content-Length")
-            self._write_response_with_progress(response, target, int(total) if total else None, progress_callback)
-        return target
+        last_error: Exception | None = None
+        for candidate_url in github_url_candidates(url, self.proxy_config):
+            try:
+                with urllib.request.urlopen(candidate_url, timeout=60) as response:
+                    total = response.headers.get("Content-Length")
+                    self._write_response_with_progress(
+                        response,
+                        target,
+                        int(total) if total else None,
+                        progress_callback,
+                    )
+                    self._verify_sha256(target, expected_sha256)
+                return target
+            except Exception as exc:
+                last_error = exc
+                self._remove_path(target, ignore_errors=True)
+
+        if last_error is not None:
+            raise last_error
+        raise ValueError(f"no URL candidates for {url}")
 
     def install(
         self,
@@ -55,7 +84,11 @@ class PackageManager:
         progress_callback: ProgressCallback | None = None,
     ) -> InstalledTool:
         selected = manifest.version(version)
-        package_path = self.download(selected.package_url, progress_callback=progress_callback)
+        package_path = self.download(
+            selected.package_url,
+            progress_callback=progress_callback,
+            expected_sha256=selected.sha256,
+        )
         return self.install_from_archive(manifest, version, package_path)
 
     def uninstall(self, tool_id: str) -> None:
@@ -103,8 +136,10 @@ class PackageManager:
         return installed
 
     def _verify_sha256(self, archive_path: Path, expected_sha256: str) -> None:
+        if not expected_sha256:
+            return
         digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-        if expected_sha256 and digest.lower() != expected_sha256.lower():
+        if digest.lower() != expected_sha256.lower():
             raise ValueError(f"sha256 mismatch for {archive_path.name}")
 
     def _copy_file_with_progress(

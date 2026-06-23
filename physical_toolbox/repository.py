@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from physical_toolbox.github_proxy import GitHubProxyConfig, github_url_candidates
 from physical_toolbox.manifest import ToolManifest
 
 
@@ -84,8 +85,13 @@ class ToolboxIndex:
 
 
 class RepositoryClient:
-    def __init__(self, timeout: int = DEFAULT_REQUEST_TIMEOUT) -> None:
+    def __init__(
+        self,
+        timeout: int = DEFAULT_REQUEST_TIMEOUT,
+        proxy_config: GitHubProxyConfig | None = None,
+    ) -> None:
         self.timeout = timeout
+        self.proxy_config = proxy_config or GitHubProxyConfig(enabled=False, proxy_urls=())
 
     def load_index(self, url: str) -> ToolboxIndex:
         data = self._load_json(url)
@@ -95,6 +101,17 @@ class RepositoryClient:
         return ToolManifest.from_dict(self._load_json(url))
 
     def _load_json(self, url: str) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for candidate_url in github_url_candidates(url, self.proxy_config):
+            try:
+                return self._load_json_once(candidate_url)
+            except Exception as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise ValueError(f"no URL candidates for {url}")
+
+    def _load_json_once(self, url: str) -> dict[str, Any]:
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme in {"http", "https"}:
             request = urllib.request.Request(

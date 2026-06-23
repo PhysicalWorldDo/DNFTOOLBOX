@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+from physical_toolbox.github_proxy import DEFAULT_GITHUB_PROXY_URLS, GitHubProxyConfig, normalize_proxy_urls
 
 DEFAULT_INDEX_URL = "https://raw.githubusercontent.com/PhysicalWorldDo/DNFTOOLBOX-Registry/main/index.json"
 GITHUB_RAW_INDEX_URL = "https://github.com/PhysicalWorldDo/DNFTOOLBOX-Registry/raw/refs/heads/main/index.json"
@@ -14,6 +16,8 @@ class AppConfig:
     name: str
     index_url: str
     channel: str
+    github_proxy_enabled: bool = True
+    github_proxy_urls: tuple[str, ...] = field(default_factory=lambda: DEFAULT_GITHUB_PROXY_URLS)
 
     @classmethod
     def default(cls, workspace: Path) -> "AppConfig":
@@ -26,10 +30,32 @@ class AppConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any], workspace: Path) -> "AppConfig":
         default = cls.default(workspace)
+        proxy = data.get("githubProxy", {})
+        if isinstance(proxy, dict):
+            proxy_enabled = bool(proxy.get("enabled", default.github_proxy_enabled))
+            proxy_urls = normalize_proxy_urls(proxy.get("urls", default.github_proxy_urls))
+        else:
+            proxy_enabled = default.github_proxy_enabled
+            proxy_urls = default.github_proxy_urls
         return cls(
             name=str(data.get("name", default.name)),
             index_url=str(data.get("indexUrl", default.index_url)),
             channel=str(data.get("channel", default.channel)),
+            github_proxy_enabled=proxy_enabled,
+            github_proxy_urls=proxy_urls or default.github_proxy_urls,
+        )
+
+    def github_proxy_config(self) -> GitHubProxyConfig:
+        return GitHubProxyConfig(
+            enabled=self.github_proxy_enabled,
+            proxy_urls=self.github_proxy_urls,
+        )
+
+    def with_github_proxy(self, *, enabled: bool, urls: tuple[str, ...]) -> "AppConfig":
+        return replace(
+            self,
+            github_proxy_enabled=enabled,
+            github_proxy_urls=normalize_proxy_urls(urls) or DEFAULT_GITHUB_PROXY_URLS,
         )
 
 
@@ -40,18 +66,40 @@ def load_or_create_config(workspace: Path) -> AppConfig:
         _save_config(path, config)
         return config
 
-    config = AppConfig.from_dict(json.loads(path.read_text(encoding="utf-8")), workspace)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    config = AppConfig.from_dict(raw, workspace)
+    needs_save = "githubProxy" not in raw
     if _uses_missing_old_example_index(config.index_url) or _uses_github_raw_index(config.index_url):
-        config = AppConfig(name=config.name, index_url=DEFAULT_INDEX_URL, channel=config.channel)
+        config = AppConfig(
+            name=config.name,
+            index_url=DEFAULT_INDEX_URL,
+            channel=config.channel,
+            github_proxy_enabled=config.github_proxy_enabled,
+            github_proxy_urls=config.github_proxy_urls,
+        )
+        needs_save = True
+    if needs_save:
         _save_config(path, config)
     return config
+
+
+def save_config(workspace: Path, config: AppConfig) -> None:
+    _save_config(workspace / "config" / "app.json", config)
 
 
 def _save_config(path: Path, config: AppConfig) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            {"name": config.name, "indexUrl": config.index_url, "channel": config.channel},
+            {
+                "name": config.name,
+                "indexUrl": config.index_url,
+                "channel": config.channel,
+                "githubProxy": {
+                    "enabled": config.github_proxy_enabled,
+                    "urls": list(config.github_proxy_urls),
+                },
+            },
             ensure_ascii=False,
             indent=2,
         ),
