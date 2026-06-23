@@ -20,6 +20,14 @@ PhysicalWorldToolbox.exe
 - 工具箱本体可通过独立 updater 自动覆盖更新
 - 右键工具可复制项目地址
 
+## 赞助支持
+
+如果这些工具对你有帮助，可以请作者喝杯咖啡
+
+| 微信赞助 | 支付宝赞助 |
+| --- | --- |
+| <img src="physical_toolbox/assets/sponsor-weixin.jpg" width="360" alt="微信赞助二维码"> | <img src="physical_toolbox/assets/sponsor-zhifubao.jpg" width="360" alt="支付宝赞助二维码"> |
+
 ## 开发运行
 
 ```powershell

@@ -87,6 +87,7 @@ class AboutPage(QFrame):
                 f"作者：{self.info.author}\nQQ号：{self.info.qq_number}\n问题反馈：{self.info.feedback_url}\nGitHub：{self.info.github_url}",
             )
         )
+        layout.addWidget(self._sponsor_card())
         layout.addWidget(self._log_card())
         layout.addStretch()
 
@@ -138,6 +139,55 @@ class AboutPage(QFrame):
         body_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(body_label)
         return card
+
+    def _sponsor_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("aboutCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        title_label = QLabel("赞助支持")
+        title_label.setObjectName("aboutCardTitle")
+        layout.addWidget(title_label)
+
+        hint = QLabel("如果这些工具对你有帮助，可以请作者喝杯咖啡")
+        hint.setObjectName("sponsorHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        qr_layout = QHBoxLayout()
+        qr_layout.setSpacing(18)
+        layout.addLayout(qr_layout)
+
+        for qr in self.info.sponsor_qrs:
+            qr_layout.addWidget(self._sponsor_qr(qr))
+        qr_layout.addStretch()
+        return card
+
+    def _sponsor_qr(self, qr) -> QFrame:
+        item = QFrame()
+        item.setObjectName("sponsorItem")
+        layout = QVBoxLayout(item)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        image_label = QLabel()
+        image_label.setObjectName(f"sponsorQr_{qr.id}")
+        image_label.setAlignment(Qt.AlignCenter)
+        image_label.setFixedSize(420, 620)
+
+        pixmap = QPixmap(str(qr.image_path))
+        if not pixmap.isNull():
+            image_label.setPixmap(pixmap.scaled(QSize(400, 580), Qt.KeepAspectRatio, Qt.FastTransformation))
+
+        title_label = QLabel(qr.title)
+        title_label.setObjectName("sponsorTitle")
+        title_label.setAlignment(Qt.AlignCenter)
+
+        layout.addWidget(image_label)
+        layout.addWidget(title_label)
+        return item
 
     def _log_card(self) -> QFrame:
         text = []
@@ -557,6 +607,23 @@ class ToolboxApp(QMainWindow):
             QLabel#aboutCardText {
                 color: rgba(235, 252, 255, 230);
                 font-size: 13px;
+            }
+            QLabel#sponsorHint {
+                color: rgba(235, 252, 255, 230);
+                font-size: 13px;
+            }
+            QFrame#sponsorItem {
+                background: transparent;
+                border: 0;
+            }
+            QLabel#sponsorQr_weixin, QLabel#sponsorQr_zhifubao {
+                background: rgba(255, 255, 255, 235);
+                border: 1px solid rgba(255, 255, 255, 120);
+            }
+            QLabel#sponsorTitle {
+                color: rgba(235, 252, 255, 235);
+                font-size: 13px;
+                font-weight: 700;
             }
             """
         )

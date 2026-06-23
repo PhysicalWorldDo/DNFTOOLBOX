@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from physical_toolbox.repository import IndexTool
 from physical_toolbox.tool_grid import ordered_categories
 
 ABOUT_NAV_ID = "__about__"
 ABOUT_NAV_LABEL = "关于页"
+ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 
 @dataclass(frozen=True)
@@ -14,6 +16,13 @@ class AboutLogEntry:
     version: str
     date: str
     items: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SponsorQr:
+    id: str
+    title: str
+    image_path: Path
 
 
 @dataclass(frozen=True)
@@ -25,6 +34,7 @@ class AboutInfo:
     bilibili_url: str
     github_url: str
     feedback_url: str
+    sponsor_qrs: tuple[SponsorQr, ...]
     logs: tuple[AboutLogEntry, ...]
 
 
@@ -37,7 +47,19 @@ def toolbox_about_info() -> AboutInfo:
         bilibili_url="https://space.bilibili.com/492488982",
         github_url="https://github.com/PhysicalWorldDo/DNFTOOLBOX",
         feedback_url="https://github.com/PhysicalWorldDo/DNFTOOLBOX/issues",
+        sponsor_qrs=(
+            SponsorQr("weixin", "微信赞助", ASSET_DIR / "sponsor-weixin.jpg"),
+            SponsorQr("zhifubao", "支付宝赞助", ASSET_DIR / "sponsor-zhifubao.jpg"),
+        ),
         logs=(
+            AboutLogEntry(
+                version="v0.1.6",
+                date="2026-06-23",
+                items=(
+                    "关于页新增赞助支持区域，显示微信和支付宝赞助二维码。",
+                    "README 同步加入赞助二维码说明。",
+                ),
+            ),
             AboutLogEntry(
                 version="v0.1.0",
                 date="2026-06-22",
