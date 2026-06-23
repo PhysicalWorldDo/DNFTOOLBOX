@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ class SelfUpdateRunner:
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
         self.update_dir = workspace / "cache" / "self-update"
+        shutil.rmtree(self.update_dir, ignore_errors=True)
 
     def prepare(
         self,
@@ -117,6 +119,9 @@ class SelfUpdateRunner:
                 "  $env:PYINSTALLER_RESET_ENVIRONMENT = '1'",
                 f"  Start-Process -FilePath {_ps_quote(restart_command[0])}{argument_list} -WorkingDirectory $InstallDir",
                 "  Write-Log 'Update completed'",
+                "  Remove-Item -LiteralPath $PackagePath -Force -ErrorAction SilentlyContinue",
+                "  Remove-Item -LiteralPath $ExtractDir -Recurse -Force -ErrorAction SilentlyContinue",
+                "  Remove-Item -LiteralPath $BackupDir -Recurse -Force -ErrorAction SilentlyContinue",
                 "}",
                 "catch {",
                 "  Write-Log \"Update failed: $($_.Exception.Message)\"",

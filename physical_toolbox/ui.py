@@ -231,7 +231,10 @@ class ProxySettingsDialog(QDialog):
         self.enabled_checkbox.setChecked(config.github_proxy_enabled)
         layout.addWidget(self.enabled_checkbox)
 
-        hint = QLabel("每行填写一个代理站。普通前缀会自动拼接 GitHub 原始地址，也支持 {url} 或 {encoded_url} 模板。")
+        hint = QLabel(
+            "每行填写一个代理站。普通前缀会自动拼接 GitHub 原始地址，也支持 {url} 或 {encoded_url} 模板。"
+            "连接 GitHub 资源时会自动测速并优先使用当前最快节点。"
+        )
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -1124,7 +1127,8 @@ class ToolboxApp(QMainWindow):
             self._set_busy(False)
         self.hint_label.setText(f"{manifest.name} 已安装：{version}")
         self._show_progress("完成")
-        self.check_updates()
+        self._refresh_local_tool_state()
+        self.hint_label.setText(f"{manifest.name} 已安装：{version}")
 
     def uninstall_selected(self) -> None:
         manifest = self._selected_manifest()
@@ -1149,7 +1153,8 @@ class ToolboxApp(QMainWindow):
             return
         self.hint_label.setText(f"{manifest.name} 已卸载")
         self.progress_bar.setVisible(False)
-        self.check_updates()
+        self._refresh_local_tool_state()
+        self.hint_label.setText(f"{manifest.name} 已卸载")
 
     def launch_selected(self) -> None:
         manifest = self._selected_manifest()
@@ -1184,6 +1189,36 @@ class ToolboxApp(QMainWindow):
             if tile.id == tool_id:
                 return tile
         return None
+
+    def _refresh_local_tool_state(self) -> None:
+        selected_tool_id = self.selected_tool_id
+        selected_category = self.selected_category
+        self.tiles = build_tool_tiles(
+            self.index_tools,
+            self.manifests,
+            self.package_manager.installed_tools(),
+            self.config.channel,
+        )
+        if selected_category == ABOUT_NAV_ID:
+            self.select_about_page()
+            return
+        if selected_category:
+            self.select_category(selected_category)
+            if selected_tool_id:
+                self._select_tool_by_id(selected_tool_id)
+            return
+        self._sync_action_buttons()
+
+    def _select_tool_by_id(self, tool_id: str) -> None:
+        for row in range(self.tool_list.count()):
+            item = self.tool_list.item(row)
+            if item.data(Qt.UserRole) != tool_id:
+                continue
+            self.tool_list.setCurrentItem(item)
+            self._select_item(item)
+            return
+        self.selected_tool_id = None
+        self._sync_action_buttons()
 
     def _set_busy(self, busy: bool) -> None:
         if busy:

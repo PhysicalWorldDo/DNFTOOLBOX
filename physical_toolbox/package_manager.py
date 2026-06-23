@@ -30,6 +30,7 @@ class PackageManager:
         self.tools_dir = workspace / "tools"
         self.downloads_dir = workspace / "downloads"
         self.installing_dir = workspace / "cache" / "installing"
+        self._remove_path(self.installing_dir, ignore_errors=True)
 
     def installed_tools(self) -> dict[str, InstalledTool]:
         return self.state_store.load()
@@ -84,12 +85,17 @@ class PackageManager:
         progress_callback: ProgressCallback | None = None,
     ) -> InstalledTool:
         selected = manifest.version(version)
-        package_path = self.download(
-            selected.package_url,
-            progress_callback=progress_callback,
-            expected_sha256=selected.sha256,
-        )
-        return self.install_from_archive(manifest, version, package_path)
+        package_path: Path | None = None
+        try:
+            package_path = self.download(
+                selected.package_url,
+                progress_callback=progress_callback,
+                expected_sha256=selected.sha256,
+            )
+            return self.install_from_archive(manifest, version, package_path)
+        finally:
+            if package_path is not None and self._is_inside(package_path, self.downloads_dir):
+                self._remove_path(package_path, ignore_errors=True)
 
     def uninstall(self, tool_id: str) -> None:
         target = self.tools_dir / tool_id
@@ -109,31 +115,33 @@ class PackageManager:
         self._verify_sha256(archive_path, selected.sha256)
 
         staging = self.installing_dir / manifest.id
-        if staging.exists():
-            shutil.rmtree(staging)
-        staging.mkdir(parents=True, exist_ok=True)
+        try:
+            if staging.exists():
+                shutil.rmtree(staging)
+            staging.mkdir(parents=True, exist_ok=True)
 
-        with zipfile.ZipFile(archive_path) as archive:
-            self._safe_extract(archive, staging)
+            with zipfile.ZipFile(archive_path) as archive:
+                self._safe_extract(archive, staging)
 
-        self._validate_package(staging, manifest.entry)
-        target = self.tools_dir / manifest.id
-        self._merge_package(staging, target)
+            self._validate_package(staging, manifest.entry)
+            target = self.tools_dir / manifest.id
+            self._merge_package(staging, target)
 
-        now = datetime.now().astimezone().isoformat(timespec="seconds")
-        previous = self.state_store.load().get(manifest.id)
-        installed = InstalledTool(
-            id=manifest.id,
-            name=manifest.name,
-            version=selected.version,
-            channel=selected.channel,
-            entry=manifest.entry,
-            installed_at=previous.installed_at if previous else now,
-            updated_at=now,
-        )
-        self.state_store.record(installed)
-        shutil.rmtree(staging, ignore_errors=True)
-        return installed
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            previous = self.state_store.load().get(manifest.id)
+            installed = InstalledTool(
+                id=manifest.id,
+                name=manifest.name,
+                version=selected.version,
+                channel=selected.channel,
+                entry=manifest.entry,
+                installed_at=previous.installed_at if previous else now,
+                updated_at=now,
+            )
+            self.state_store.record(installed)
+            return installed
+        finally:
+            self._remove_path(staging, ignore_errors=True)
 
     def _verify_sha256(self, archive_path: Path, expected_sha256: str) -> None:
         if not expected_sha256:
@@ -261,3 +269,8 @@ class PackageManager:
             except Exception:
                 if not ignore_errors:
                     raise
+
+    def _is_inside(self, path: Path, root: Path) -> bool:
+        resolved_path = path.resolve()
+        resolved_root = root.resolve()
+        return resolved_path == resolved_root or resolved_root in resolved_path.parents

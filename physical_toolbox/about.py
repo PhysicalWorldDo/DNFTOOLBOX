@@ -53,6 +53,15 @@ def toolbox_about_info() -> AboutInfo:
         ),
         logs=(
             AboutLogEntry(
+                version="v0.1.8",
+                date="2026-06-24",
+                items=(
+                    "下载 GitHub 资源前自动测速代理节点，优先使用当前最快可用节点。",
+                    "安装或卸载工具后只刷新本地安装状态，不再自动全量检查远程更新。",
+                    "安装后自动清理 downloads 安装包和 cache 临时目录，自更新成功后清理 self-update 残留。",
+                ),
+            ),
+            AboutLogEntry(
                 version="v0.1.7",
                 date="2026-06-24",
                 items=(

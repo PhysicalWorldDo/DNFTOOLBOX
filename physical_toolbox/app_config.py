@@ -5,7 +5,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from physical_toolbox.github_proxy import DEFAULT_GITHUB_PROXY_URLS, GitHubProxyConfig, normalize_proxy_urls
+from physical_toolbox.github_proxy import (
+    DEFAULT_GITHUB_PROXY_URLS,
+    LEGACY_DEFAULT_GITHUB_PROXY_URLS,
+    GitHubProxyConfig,
+    normalize_proxy_urls,
+)
 
 DEFAULT_INDEX_URL = "https://raw.githubusercontent.com/PhysicalWorldDo/DNFTOOLBOX-Registry/main/index.json"
 GITHUB_RAW_INDEX_URL = "https://github.com/PhysicalWorldDo/DNFTOOLBOX-Registry/raw/refs/heads/main/index.json"
@@ -34,6 +39,8 @@ class AppConfig:
         if isinstance(proxy, dict):
             proxy_enabled = bool(proxy.get("enabled", default.github_proxy_enabled))
             proxy_urls = normalize_proxy_urls(proxy.get("urls", default.github_proxy_urls))
+            if proxy_urls == LEGACY_DEFAULT_GITHUB_PROXY_URLS:
+                proxy_urls = DEFAULT_GITHUB_PROXY_URLS
         else:
             proxy_enabled = default.github_proxy_enabled
             proxy_urls = default.github_proxy_urls
@@ -68,7 +75,11 @@ def load_or_create_config(workspace: Path) -> AppConfig:
 
     raw = json.loads(path.read_text(encoding="utf-8"))
     config = AppConfig.from_dict(raw, workspace)
-    needs_save = "githubProxy" not in raw
+    saved_proxy = raw.get("githubProxy", {})
+    saved_proxy_urls = (
+        normalize_proxy_urls(saved_proxy.get("urls", ())) if isinstance(saved_proxy, dict) else ()
+    )
+    needs_save = "githubProxy" not in raw or saved_proxy_urls == LEGACY_DEFAULT_GITHUB_PROXY_URLS
     if _uses_missing_old_example_index(config.index_url) or _uses_github_raw_index(config.index_url):
         config = AppConfig(
             name=config.name,
