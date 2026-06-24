@@ -40,7 +40,7 @@ from physical_toolbox.github_proxy import normalize_proxy_urls
 from physical_toolbox.fonts import candidate_cjk_font_paths
 from physical_toolbox.install_state import InstallStateStore
 from physical_toolbox.launching import launch_entry
-from physical_toolbox.manifest import ToolManifest
+from physical_toolbox.manifest import ToolManifest, VersionKey
 from physical_toolbox.package_manager import PackageManager
 from physical_toolbox.repository import IndexTool, RepositoryClient, ToolboxUpdate
 from physical_toolbox.self_updater import SelfUpdateRunner
@@ -49,7 +49,35 @@ from physical_toolbox.tool_grid import ToolTile, build_tool_tiles, default_selec
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
 APP_ICON_PATH = ASSET_DIR / "toolbox-icon.ico"
+ASTRAL_BACKGROUND_PATH = ASSET_DIR / "astral-background.png"
 MAX_UPDATE_WORKERS = 8
+
+
+class ElidedLabel(QLabel):
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
+    def display_text(self) -> str:
+        width = max(0, self.contentsRect().width())
+        return self.fontMetrics().elidedText(self.text(), Qt.ElideRight, width)
+
+    def minimumSizeHint(self) -> QSize:  # type: ignore[override]
+        hint = super().minimumSizeHint()
+        hint.setWidth(0)
+        return hint
+
+    def sizeHint(self) -> QSize:  # type: ignore[override]
+        hint = super().sizeHint()
+        hint.setWidth(min(hint.width(), 360))
+        return hint
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.setFont(self.font())
+        painter.drawText(self.contentsRect(), self.alignment() | Qt.AlignVCenter, self.display_text())
 
 
 class AboutPage(QFrame):
@@ -292,6 +320,7 @@ class ToolboxApp(QMainWindow):
         self._update_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self._update_thread: threading.Thread | None = None
         self._startup_about_pending_remote = False
+        self._astral_background = QPixmap(str(ASTRAL_BACKGROUND_PATH))
 
         self.setWindowTitle(config.name)
         if APP_ICON_PATH.exists():
@@ -428,9 +457,9 @@ class ToolboxApp(QMainWindow):
         detail_layout.setHorizontalSpacing(12)
         detail_layout.setVerticalSpacing(3)
 
-        self.detail_title = QLabel("选择一个工具")
+        self.detail_title = ElidedLabel("选择一个工具")
         self.detail_title.setObjectName("detailTitle")
-        detail_layout.addWidget(self.detail_title, 0, 0)
+        detail_layout.addWidget(self.detail_title, 0, 0, 1, 6)
 
         self.detail_text = QLabel("工具说明会显示在这里。")
         self.detail_text.setObjectName("detailText")
@@ -440,27 +469,28 @@ class ToolboxApp(QMainWindow):
         self.version_combo = QComboBox()
         self.version_combo.setObjectName("versionCombo")
         self.version_combo.setFixedWidth(150)
-        detail_layout.addWidget(self.version_combo, 0, 1, 2, 1)
+        self.version_combo.currentTextChanged.connect(lambda _text: self._sync_action_buttons())
+        detail_layout.addWidget(self.version_combo, 1, 1)
 
         self.install_button = QPushButton("安装 / 更新")
         self.install_button.setObjectName("actionButton")
         self.install_button.clicked.connect(self.install_selected)
-        detail_layout.addWidget(self.install_button, 0, 2, 2, 1)
+        detail_layout.addWidget(self.install_button, 1, 2)
 
         self.launch_button = QPushButton("启动")
         self.launch_button.setObjectName("actionButton")
         self.launch_button.clicked.connect(self.launch_selected)
-        detail_layout.addWidget(self.launch_button, 0, 3, 2, 1)
+        detail_layout.addWidget(self.launch_button, 1, 3)
 
         self.uninstall_button = QPushButton("卸载")
         self.uninstall_button.setObjectName("actionButton")
         self.uninstall_button.clicked.connect(self.uninstall_selected)
-        detail_layout.addWidget(self.uninstall_button, 0, 4, 2, 1)
+        detail_layout.addWidget(self.uninstall_button, 1, 4)
 
         self.open_dir_button = QPushButton("目录")
         self.open_dir_button.setObjectName("actionButton")
         self.open_dir_button.clicked.connect(self.open_selected_dir)
-        detail_layout.addWidget(self.open_dir_button, 0, 5, 2, 1)
+        detail_layout.addWidget(self.open_dir_button, 1, 5)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setObjectName("downloadProgress")
@@ -481,28 +511,28 @@ class ToolboxApp(QMainWindow):
             """
             QWidget#root {
                 background: transparent;
-                color: white;
+                color: #EAF0FF;
                 font-family: "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "SimHei", sans-serif;
             }
             QFrame#sidebar {
-                background: rgba(16, 83, 161, 165);
-                border-right: 1px solid rgba(255, 255, 255, 22);
+                background: rgba(14, 16, 36, 226);
+                border-right: 1px solid rgba(245, 199, 107, 72);
             }
             QLabel#sideTitle {
-                color: white;
+                color: #F4E7C1;
                 font-size: 20px;
                 min-height: 48px;
             }
             QFrame#sideLine {
-                background: rgba(0, 30, 90, 45);
+                background: rgba(245, 199, 107, 58);
             }
             QLabel#sideVersion {
-                color: white;
+                color: rgba(234, 240, 255, 220);
                 font-size: 14px;
                 min-height: 36px;
             }
             QLabel#sideUpdateStatus {
-                color: rgba(235, 252, 255, 220);
+                color: rgba(0, 215, 255, 230);
                 font-size: 11px;
                 min-height: 18px;
                 max-height: 18px;
@@ -511,47 +541,50 @@ class ToolboxApp(QMainWindow):
                 margin-left: 58px;
                 margin-right: 58px;
                 margin-bottom: 8px;
-                background: rgba(255, 255, 255, 45);
+                background: rgba(0, 215, 255, 38);
                 border: 0;
                 min-height: 5px;
                 max-height: 5px;
             }
             QProgressBar#sideUpdateProgress::chunk {
-                background: rgba(83, 227, 178, 220);
+                background: rgba(0, 215, 255, 230);
             }
             QPushButton#categoryButton {
                 background: transparent;
                 border: 0;
-                color: white;
+                color: rgba(234, 240, 255, 230);
                 font-size: 17px;
                 min-height: 50px;
                 text-align: center;
             }
             QPushButton#categoryButton:hover {
-                background: rgba(255, 255, 255, 22);
+                background: rgba(108, 46, 232, 70);
+                color: #FFFFFF;
             }
             QPushButton#categoryButton:checked {
-                background: rgba(255, 255, 255, 30);
-                border-left: 4px solid rgba(255, 255, 255, 180);
+                background: rgba(108, 46, 232, 105);
+                border-left: 4px solid rgba(245, 199, 107, 230);
                 padding-left: -4px;
+                color: #FFFFFF;
             }
             QFrame#main {
                 background: transparent;
             }
             QFrame#hintFrame {
-                background: rgba(255, 255, 255, 32);
+                background: rgba(22, 17, 48, 188);
+                border: 1px solid rgba(0, 215, 255, 54);
                 min-height: 40px;
                 max-height: 40px;
             }
             QLabel#hintLabel {
-                color: white;
+                color: #EAF0FF;
                 font-size: 15px;
                 font-weight: 600;
             }
             QPushButton#windowButton {
-                background: rgba(255, 255, 255, 16);
-                border: 0;
-                color: white;
+                background: rgba(22, 17, 48, 188);
+                border: 1px solid rgba(245, 199, 107, 50);
+                color: #F5C76B;
                 font-size: 18px;
                 min-width: 38px;
                 max-width: 38px;
@@ -559,12 +592,14 @@ class ToolboxApp(QMainWindow):
                 max-height: 40px;
             }
             QPushButton#windowButton:hover {
-                background: rgba(255, 255, 255, 36);
+                background: rgba(108, 46, 232, 130);
+                border-color: rgba(0, 215, 255, 120);
+                color: #FFFFFF;
             }
             QListWidget#toolGrid {
                 background: transparent;
                 border: 0;
-                color: white;
+                color: #EAF0FF;
                 outline: 0;
                 font-size: 13px;
             }
@@ -574,53 +609,64 @@ class ToolboxApp(QMainWindow):
                 padding: 4px;
             }
             QListWidget#toolGrid::item:hover {
-                background: rgba(255, 255, 255, 24);
+                background: rgba(0, 215, 255, 32);
             }
             QListWidget#toolGrid::item:selected {
-                background: rgba(255, 255, 255, 38);
+                background: rgba(108, 46, 232, 78);
             }
             QFrame#detailBar {
-                background: rgba(255, 255, 255, 24);
-                border-top: 1px solid rgba(255, 255, 255, 34);
+                background: rgba(15, 14, 34, 222);
+                border-top: 1px solid rgba(245, 199, 107, 95);
             }
             QLabel#detailTitle {
-                color: white;
+                color: #F5C76B;
                 font-size: 16px;
                 font-weight: 700;
             }
             QLabel#detailText {
-                color: rgba(235, 252, 255, 225);
+                color: rgba(191, 212, 255, 232);
                 font-size: 13px;
             }
             QComboBox#versionCombo {
-                background: rgba(255, 255, 255, 238);
-                border: 0;
-                color: #165172;
+                background: rgba(234, 240, 255, 238);
+                border: 1px solid rgba(245, 199, 107, 125);
+                color: #171228;
                 min-height: 32px;
                 padding-left: 8px;
             }
+            QComboBox#versionCombo QAbstractItemView {
+                background: #171228;
+                border: 1px solid rgba(245, 199, 107, 150);
+                color: #EAF0FF;
+                selection-background-color: #6C2EE8;
+            }
             QPushButton#actionButton {
-                background: rgba(255, 255, 255, 235);
-                border: 0;
-                color: #11536f;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #F5C76B, stop:1 #C9902E);
+                border: 1px solid rgba(255, 236, 170, 185);
+                color: #211405;
                 min-width: 82px;
                 min-height: 34px;
                 font-weight: 700;
             }
             QPushButton#actionButton:hover {
-                background: white;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFE08A, stop:1 #DDA642);
+            }
+            QPushButton#actionButton:disabled {
+                background: rgba(82, 79, 104, 138);
+                border: 1px solid rgba(234, 240, 255, 45);
+                color: rgba(234, 240, 255, 95);
             }
             QProgressBar#downloadProgress {
-                background: rgba(255, 255, 255, 52);
+                background: rgba(234, 240, 255, 42);
                 border: 0;
-                color: white;
+                color: #EAF0FF;
                 min-height: 14px;
                 max-height: 14px;
                 text-align: center;
                 font-size: 10px;
             }
             QProgressBar#downloadProgress::chunk {
-                background: rgba(83, 227, 178, 210);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00D7FF, stop:1 #F5C76B);
             }
             QFrame#aboutPage, QWidget#aboutContent {
                 background: transparent;
@@ -630,44 +676,44 @@ class ToolboxApp(QMainWindow):
                 border: 0;
             }
             QFrame#aboutHero {
-                background: rgba(255, 255, 255, 32);
-                border: 1px solid rgba(255, 255, 255, 34);
+                background: rgba(22, 17, 48, 188);
+                border: 1px solid rgba(0, 215, 255, 54);
             }
             QLabel#aboutTitle {
-                color: white;
+                color: #F5C76B;
                 font-size: 25px;
                 font-weight: 800;
             }
             QLabel#aboutTagline {
-                color: rgba(235, 252, 255, 225);
+                color: rgba(191, 212, 255, 232);
                 font-size: 14px;
             }
             QPushButton#aboutButton {
-                background: rgba(255, 255, 255, 226);
-                border: 0;
-                color: #11536f;
+                background: rgba(245, 199, 107, 225);
+                border: 1px solid rgba(255, 236, 170, 160);
+                color: #211405;
                 min-width: 78px;
                 min-height: 30px;
                 font-weight: 700;
             }
             QPushButton#aboutButton:hover {
-                background: white;
+                background: #FFE08A;
             }
             QFrame#aboutCard {
-                background: rgba(255, 255, 255, 26);
-                border-top: 1px solid rgba(255, 255, 255, 30);
+                background: rgba(15, 14, 34, 180);
+                border-top: 1px solid rgba(245, 199, 107, 72);
             }
             QLabel#aboutCardTitle {
-                color: white;
+                color: #F5C76B;
                 font-size: 16px;
                 font-weight: 800;
             }
             QLabel#aboutCardText {
-                color: rgba(235, 252, 255, 230);
+                color: rgba(191, 212, 255, 232);
                 font-size: 13px;
             }
             QLabel#sponsorHint {
-                color: rgba(235, 252, 255, 230);
+                color: rgba(191, 212, 255, 232);
                 font-size: 13px;
             }
             QFrame#sponsorItem {
@@ -676,10 +722,10 @@ class ToolboxApp(QMainWindow):
             }
             QLabel#sponsorQr_weixin, QLabel#sponsorQr_zhifubao {
                 background: rgba(255, 255, 255, 235);
-                border: 1px solid rgba(255, 255, 255, 120);
+                border: 1px solid rgba(245, 199, 107, 150);
             }
             QLabel#sponsorTitle {
-                color: rgba(235, 252, 255, 235);
+                color: rgba(234, 240, 255, 235);
                 font-size: 13px;
                 font-weight: 700;
             }
@@ -985,7 +1031,7 @@ class ToolboxApp(QMainWindow):
         try:
             self.menu_button.setEnabled(False)
             self._set_busy(True)
-            self._show_progress("准备下载工具箱更新...")
+            self._begin_download_progress("正在选择最快下载节点...")
             package_path = self.toolbox_update_downloader.download(
                 update,
                 progress_callback=self._update_download_progress,
@@ -1075,7 +1121,7 @@ class ToolboxApp(QMainWindow):
         for tile in visible_tiles:
             item = QListWidgetItem(self._icon_for_tile(tile), tile.name)
             item.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
-            item.setToolTip(f"{tile.name}\n{tile.status_text}\n{tile.description}")
+            item.setToolTip(f"{self._detail_title_for_tile(tile)}\n{tile.description}")
             item.setData(Qt.UserRole, tile.id)
             self.tool_list.addItem(item)
 
@@ -1084,6 +1130,7 @@ class ToolboxApp(QMainWindow):
             self.detail_text.setText("这个分类下暂时没有工具。")
             self.version_combo.clear()
             self.selected_tool_id = None
+            self._sync_action_buttons()
 
     def _select_item(self, item: QListWidgetItem) -> None:
         tool_id = item.data(Qt.UserRole)
@@ -1092,7 +1139,7 @@ class ToolboxApp(QMainWindow):
         if tile is None:
             return
 
-        self.detail_title.setText(f"{tile.name} · {tile.status_text}")
+        self.detail_title.setText(self._detail_title_for_tile(tile))
         self.detail_text.setText(tile.description or "暂无说明。")
         self.hint_label.setText(f"工具说明：{tile.description or tile.name}")
         self.version_combo.clear()
@@ -1117,7 +1164,7 @@ class ToolboxApp(QMainWindow):
             return
         try:
             self._set_busy(True)
-            self._show_progress("准备下载...")
+            self._begin_download_progress("正在选择最快下载节点...")
             self.package_manager.install(manifest, version, progress_callback=self._update_download_progress)
         except Exception as exc:
             self._show_progress("下载 / 安装失败")
@@ -1231,10 +1278,50 @@ class ToolboxApp(QMainWindow):
         tile = self._tile(self.selected_tool_id) if self.selected_tool_id else None
         has_selection = tile is not None
         is_installed = bool(tile and tile.is_installed)
+        self.install_button.setText(self._install_button_text(tile))
         self.install_button.setEnabled(has_selection)
         self.launch_button.setEnabled(is_installed)
         self.open_dir_button.setEnabled(is_installed)
         self.uninstall_button.setEnabled(is_installed)
+
+    def _install_button_text(self, tile: ToolTile | None) -> str:
+        if tile is None:
+            return "安装 / 更新"
+        selected_version = self.version_combo.currentText()
+        if not tile.is_installed:
+            return "安装"
+        if selected_version and selected_version == tile.installed_version:
+            return "重新安装"
+        if selected_version and selected_version == tile.latest_version and self._tile_has_update(tile):
+            return "更新"
+        if selected_version:
+            return "切换版本"
+        return "更新" if self._tile_has_update(tile) else "重新安装"
+
+    def _detail_title_for_tile(self, tile: ToolTile) -> str:
+        parts = [tile.name]
+        if not tile.is_installed:
+            parts.append("未安装")
+            if tile.latest_version:
+                parts.append(f"最新 {tile.latest_version}")
+            return " · ".join(parts)
+
+        if tile.installed_version:
+            parts.append(f"已安装 {tile.installed_version}")
+        else:
+            parts.append("已安装")
+        if tile.latest_version:
+            parts.append(f"最新 {tile.latest_version}")
+            parts.append("可更新" if self._tile_has_update(tile) else "已是最新")
+        return " · ".join(parts)
+
+    def _tile_has_update(self, tile: ToolTile) -> bool:
+        if not (tile.is_installed and tile.installed_version and tile.latest_version):
+            return False
+        try:
+            return VersionKey.parse(tile.installed_version) < VersionKey.parse(tile.latest_version)
+        except ValueError:
+            return tile.installed_version != tile.latest_version
 
     def _clear_update_queue(self) -> None:
         while True:
@@ -1280,6 +1367,15 @@ class ToolboxApp(QMainWindow):
         if app is not None:
             app.processEvents()
 
+    def _begin_download_progress(self, text: str) -> None:
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat(text)
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+
     def _update_download_progress(self, downloaded: int, total: int | None) -> None:
         if total and total > 0:
             percent = min(100, int(downloaded * 100 / total))
@@ -1306,9 +1402,12 @@ class ToolboxApp(QMainWindow):
         painter.setRenderHint(QPainter.Antialiasing)
 
         seed = sum(ord(char) for char in tile.id)
-        hue = seed % 360
-        color_a = QColor.fromHsv(hue, 180, 245)
-        color_b = QColor.fromHsv((hue + 36) % 360, 210, 210)
+        palette = (
+            (QColor("#6C2EE8"), QColor("#00D7FF")),
+            (QColor("#C9902E"), QColor("#F5C76B")),
+            (QColor("#2F185F"), QColor("#6C2EE8")),
+        )
+        color_a, color_b = palette[seed % len(palette)]
 
         gradient = QLinearGradient(8, 8, 48, 48)
         gradient.setColorAt(0, color_a)
@@ -1317,7 +1416,7 @@ class ToolboxApp(QMainWindow):
         path = QPainterPath()
         path.addRoundedRect(QRect(7, 7, 42, 42), 8, 8)
         painter.fillPath(path, gradient)
-        painter.setPen(QPen(QColor(255, 255, 255, 210), 2))
+        painter.setPen(QPen(QColor("#F5C76B"), 2))
         painter.drawPath(path)
 
         painter.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
@@ -1325,21 +1424,45 @@ class ToolboxApp(QMainWindow):
         painter.drawText(QRect(8, 8, 40, 40), Qt.AlignCenter, tile.name[:1])
 
         if tile.is_installed:
-            painter.setBrush(QColor(80, 220, 125))
-            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#00D7FF"))
+            painter.setPen(QPen(QColor("#F5C76B"), 1))
             painter.drawEllipse(QRect(39, 6, 11, 11))
 
         painter.end()
         return pixmap
 
+    def _draw_background_image(self, painter: QPainter) -> None:
+        if self._astral_background.isNull():
+            return
+        target = self.rect()
+        source = self._cover_source_rect(self._astral_background.size(), target.size())
+        painter.drawPixmap(target, self._astral_background, source)
+        painter.fillRect(target, QColor(4, 6, 20, 72))
+
+    def _cover_source_rect(self, source_size: QSize, target_size: QSize) -> QRect:
+        if source_size.isEmpty() or target_size.isEmpty():
+            return QRect()
+
+        source_ratio = source_size.width() / source_size.height()
+        target_ratio = target_size.width() / target_size.height()
+        if source_ratio > target_ratio:
+            width = int(source_size.height() * target_ratio)
+            left = (source_size.width() - width) // 2
+            return QRect(left, 0, width, source_size.height())
+
+        height = int(source_size.width() / target_ratio)
+        top = (source_size.height() - height) // 2
+        return QRect(0, top, source_size.width(), height)
+
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         gradient = QLinearGradient(self.rect().topLeft(), self.rect().topRight())
-        gradient.setColorAt(0, QColor("#1f63bf"))
-        gradient.setColorAt(0.55, QColor("#118ccd"))
-        gradient.setColorAt(1, QColor("#17c5c8"))
+        gradient.setColorAt(0, QColor("#101322"))
+        gradient.setColorAt(0.5, QColor("#211246"))
+        gradient.setColorAt(1, QColor("#073247"))
         painter.fillRect(self.rect(), gradient)
+        self._draw_background_image(painter)
         super().paintEvent(event)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
