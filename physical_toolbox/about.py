@@ -53,6 +53,14 @@ def toolbox_about_info() -> AboutInfo:
         ),
         logs=(
             AboutLogEntry(
+                version="v0.1.10",
+                date="2026-06-26",
+                items=(
+                    "紧急修复工具箱自更新逻辑：只替换更新包内文件，不再枚举、移动或删除安装目录中的其他文件。",
+                    "防止工具箱直接放在桌面运行时，自更新误处理桌面文件。",
+                ),
+            ),
+            AboutLogEntry(
                 version="v0.1.9",
                 date="2026-06-24",
                 items=(
