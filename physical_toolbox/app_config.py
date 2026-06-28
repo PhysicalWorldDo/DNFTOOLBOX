@@ -23,6 +23,7 @@ class AppConfig:
     channel: str
     github_proxy_enabled: bool = True
     github_proxy_urls: tuple[str, ...] = field(default_factory=lambda: DEFAULT_GITHUB_PROXY_URLS)
+    suppress_directory_warning: bool = False
 
     @classmethod
     def default(cls, workspace: Path) -> "AppConfig":
@@ -50,6 +51,9 @@ class AppConfig:
             channel=str(data.get("channel", default.channel)),
             github_proxy_enabled=proxy_enabled,
             github_proxy_urls=proxy_urls or default.github_proxy_urls,
+            suppress_directory_warning=bool(
+                data.get("suppressDirectoryWarning", default.suppress_directory_warning)
+            ),
         )
 
     def github_proxy_config(self) -> GitHubProxyConfig:
@@ -64,6 +68,9 @@ class AppConfig:
             github_proxy_enabled=enabled,
             github_proxy_urls=normalize_proxy_urls(urls) or DEFAULT_GITHUB_PROXY_URLS,
         )
+
+    def with_directory_warning_suppressed(self, suppressed: bool) -> "AppConfig":
+        return replace(self, suppress_directory_warning=suppressed)
 
 
 def load_or_create_config(workspace: Path) -> AppConfig:
@@ -87,6 +94,7 @@ def load_or_create_config(workspace: Path) -> AppConfig:
             channel=config.channel,
             github_proxy_enabled=config.github_proxy_enabled,
             github_proxy_urls=config.github_proxy_urls,
+            suppress_directory_warning=config.suppress_directory_warning,
         )
         needs_save = True
     if needs_save:
@@ -106,6 +114,7 @@ def _save_config(path: Path, config: AppConfig) -> None:
                 "name": config.name,
                 "indexUrl": config.index_url,
                 "channel": config.channel,
+                "suppressDirectoryWarning": config.suppress_directory_warning,
                 "githubProxy": {
                     "enabled": config.github_proxy_enabled,
                     "urls": list(config.github_proxy_urls),

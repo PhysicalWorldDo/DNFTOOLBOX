@@ -36,12 +36,14 @@ from PySide6.QtWidgets import (
 from physical_toolbox import __version__
 from physical_toolbox.about import ABOUT_NAV_ID, ABOUT_NAV_LABEL, toolbox_about_info
 from physical_toolbox.app_config import AppConfig, DEFAULT_GITHUB_PROXY_URLS, save_config
+from physical_toolbox.directory_safety import DirectorySafetyReport, inspect_toolbox_directory
 from physical_toolbox.github_proxy import normalize_proxy_urls
 from physical_toolbox.fonts import candidate_cjk_font_paths
-from physical_toolbox.install_state import InstallStateStore
+from physical_toolbox.install_state import InstalledTool, InstallStateStore
 from physical_toolbox.launching import launch_entry
 from physical_toolbox.manifest import ToolManifest, VersionKey
 from physical_toolbox.package_manager import PackageManager
+from physical_toolbox.registry_cache import RegistryCache
 from physical_toolbox.repository import IndexTool, RepositoryClient, ToolboxUpdate
 from physical_toolbox.self_updater import SelfUpdateRunner
 from physical_toolbox.toolbox_update import ToolboxUpdateDownloader, is_toolbox_update_available
@@ -299,6 +301,69 @@ class ProxySettingsDialog(QDialog):
         return normalize_proxy_urls(self.proxy_edit.toPlainText().splitlines())
 
 
+class DirectorySafetyWarningDialog(QDialog):
+    def __init__(self, report: DirectorySafetyReport, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.report = report
+        self.setWindowTitle("工具箱目录建议")
+        self.setMinimumWidth(620)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        title = QLabel("建议将工具箱放在独立英文目录中")
+        title.setObjectName("directorySafetyTitle")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+
+        body = QLabel(
+            "为避免工具安装、更新或清理缓存时影响其他文件，请将工具箱放在独立英文目录中使用。\n"
+            "推荐路径：D:\\DNFTools\\Toolbox\n"
+            "请不要直接放在桌面、下载目录、游戏目录，或包含其他个人文件的文件夹中。"
+        )
+        body.setObjectName("directorySafetyText")
+        body.setWordWrap(True)
+        layout.addWidget(body)
+
+        current_path = QLabel(f"当前目录：{report.path}")
+        current_path.setObjectName("directorySafetyPath")
+        current_path.setWordWrap(True)
+        current_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(current_path)
+
+        issue_text = QLabel(self._issue_text(report))
+        issue_text.setObjectName("directorySafetyIssues")
+        issue_text.setWordWrap(True)
+        layout.addWidget(issue_text)
+
+        self.suppress_checkbox = QCheckBox("不再提示")
+        layout.addWidget(self.suppress_checkbox)
+
+        buttons = QDialogButtonBox()
+        ok_button = buttons.addButton("我知道了", QDialogButtonBox.AcceptRole)
+        open_button = buttons.addButton("打开当前目录", QDialogButtonBox.ActionRole)
+        ok_button.setDefault(True)
+        buttons.accepted.connect(self.accept)
+        open_button.clicked.connect(self.open_current_directory)
+        layout.addWidget(buttons)
+
+    def suppress_for_future(self) -> bool:
+        return self.suppress_checkbox.isChecked()
+
+    def open_current_directory(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.report.path)))
+
+    def _issue_text(self, report: DirectorySafetyReport) -> str:
+        lines = ["检测到以下风险："]
+        lines.extend(f"- {issue.message}" for issue in report.issues)
+        if report.extra_folders:
+            lines.append(f"- 额外文件夹：{', '.join(report.extra_folders[:5])}")
+        if report.extra_files:
+            lines.append(f"- 额外文件：{', '.join(report.extra_files[:5])}")
+        return "\n".join(lines)
+
+
 class ToolboxApp(QMainWindow):
     def __init__(self, workspace: Path, config: AppConfig) -> None:
         super().__init__()
@@ -307,6 +372,7 @@ class ToolboxApp(QMainWindow):
         self.repository = RepositoryClient(proxy_config=config.github_proxy_config())
         self.state_store = InstallStateStore(workspace / "config" / "installed.json")
         self.package_manager = PackageManager(workspace, self.state_store, proxy_config=config.github_proxy_config())
+        self.registry_cache = RegistryCache(workspace / "config" / "registry-cache")
         self.toolbox_update_downloader = ToolboxUpdateDownloader(workspace, proxy_config=config.github_proxy_config())
         self.self_update_runner = SelfUpdateRunner(workspace)
         self.index_tools = []
@@ -320,6 +386,7 @@ class ToolboxApp(QMainWindow):
         self._update_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self._update_thread: threading.Thread | None = None
         self._startup_about_pending_remote = False
+        self._directory_safety_checked = False
         self._astral_background = QPixmap(str(ASTRAL_BACKGROUND_PATH))
 
         self.setWindowTitle(config.name)
@@ -806,8 +873,36 @@ class ToolboxApp(QMainWindow):
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
+        self._show_directory_safety_warning_once()
+
+    def _show_directory_safety_warning_once(self) -> None:
+        if self._directory_safety_checked:
+            return
+        self._directory_safety_checked = True
+        if self.config.suppress_directory_warning:
+            return
+
+        report = inspect_toolbox_directory(self.workspace)
+        if not report.is_risky:
+            return
+
+        dialog = DirectorySafetyWarningDialog(report, self)
+        dialog.exec()
+        if dialog.suppress_for_future():
+            self.config = self.config.with_directory_warning_suppressed(True)
+            save_config(self.workspace, self.config)
 
     def _render_initial_ui(self) -> None:
+        if self._load_cached_tools():
+            self._startup_about_pending_remote = False
+            if self.toolbox_update_info is not None:
+                self.hint_label.setText(
+                    f"发现工具箱新版本 {self.toolbox_update_info.latest_version}，点击右上角菜单下载更新。"
+                )
+            else:
+                self.hint_label.setText("已加载上次工具列表。需要最新工具时可在右上角菜单手动检查。")
+            return
+
         if self._load_local_tools():
             self._startup_about_pending_remote = False
             self.hint_label.setText("本地工具已就绪。需要更新时可在右上角菜单手动检查。")
@@ -818,30 +913,38 @@ class ToolboxApp(QMainWindow):
         self._startup_about_pending_remote = True
         self.hint_label.setText("工具箱已启动。可在右上角菜单手动检查更新。")
 
+    def _load_cached_tools(self) -> bool:
+        snapshot = self.registry_cache.load()
+        if snapshot is None:
+            return False
+
+        installed_tools = self.package_manager.installed_tools()
+        index_tools = list(snapshot.index_tools)
+        manifests = dict(snapshot.manifests)
+        self._append_local_installed_tools(index_tools, manifests, installed_tools)
+
+        tiles = build_tool_tiles(index_tools, manifests, installed_tools, self.config.channel)
+        self.index_tools = index_tools
+        self.manifests = manifests
+        self.tiles = tiles
+        self.toolbox_update_info = (
+            snapshot.toolbox_update
+            if is_toolbox_update_available(snapshot.toolbox_update, __version__)
+            else None
+        )
+        if not tiles:
+            return False
+
+        self._render_categories()
+        self.select_category(default_selected_category(ordered_categories(self.index_tools), self.tiles))
+        return True
+
     def _load_local_tools(self) -> bool:
         installed_tools = self.package_manager.installed_tools()
         index_tools: list[IndexTool] = []
         manifests: dict[str, ToolManifest] = {}
 
-        for tool_id in sorted(installed_tools):
-            manifest_path = self.workspace / "tools" / tool_id / "tool.json"
-            if not manifest_path.exists():
-                continue
-            try:
-                manifest = ToolManifest.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
-            except Exception:
-                continue
-            if manifest.id != tool_id:
-                continue
-            manifests[manifest.id] = manifest
-            index_tools.append(
-                IndexTool(
-                    id=manifest.id,
-                    name=manifest.name,
-                    category=manifest.category,
-                    manifest_url=str(manifest_path),
-                )
-            )
+        self._append_local_installed_tools(index_tools, manifests, installed_tools)
 
         tiles = build_tool_tiles(index_tools, manifests, installed_tools, self.config.channel)
         self.index_tools = index_tools
@@ -853,6 +956,67 @@ class ToolboxApp(QMainWindow):
         self._render_categories()
         self.select_category(default_selected_category(ordered_categories(self.index_tools), self.tiles))
         return True
+
+    def _append_local_installed_tools(
+        self,
+        index_tools: list[IndexTool],
+        manifests: dict[str, ToolManifest],
+        installed_tools: dict[str, InstalledTool],
+    ) -> None:
+        known_tool_ids = {tool.id for tool in index_tools}
+        for tool_id, installed in sorted(installed_tools.items(), key=lambda item: item[0]):
+            if tool_id in known_tool_ids:
+                continue
+
+            manifest = self._load_installed_manifest(tool_id)
+            if manifest is None:
+                manifest = self._installed_tool_placeholder_manifest(installed)
+
+            manifests[manifest.id] = manifest
+            index_tools.append(
+                IndexTool(
+                    id=manifest.id,
+                    name=manifest.name,
+                    category=manifest.category,
+                    manifest_url=str(self.workspace / "tools" / tool_id / "tool.json"),
+                )
+            )
+            known_tool_ids.add(tool_id)
+
+    def _load_installed_manifest(self, tool_id: str) -> ToolManifest | None:
+        manifest_path = self.workspace / "tools" / tool_id / "tool.json"
+        if not manifest_path.exists():
+            return None
+        try:
+            manifest = ToolManifest.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
+        except Exception:
+            return None
+        if manifest.id != tool_id:
+            return None
+        return manifest
+
+    def _installed_tool_placeholder_manifest(self, installed: InstalledTool) -> ToolManifest:
+        return ToolManifest.from_dict(
+            {
+                "schemaVersion": 1,
+                "id": installed.id,
+                "name": installed.name,
+                "category": "其他工具",
+                "description": "本地已安装工具，远程清单尚未加载。",
+                "icon": "",
+                "entry": installed.entry,
+                "needAdmin": False,
+                "latest": {self.config.channel: installed.version},
+                "versions": [
+                    {
+                        "version": installed.version,
+                        "channel": self.config.channel,
+                        "packageUrl": "",
+                        "sha256": "",
+                    }
+                ],
+            }
+        )
 
     def check_updates(self) -> None:
         if self._update_thread is not None and self._update_thread.is_alive():
@@ -881,6 +1045,10 @@ class ToolboxApp(QMainWindow):
                 self.package_manager.installed_tools(),
                 self.config.channel,
             )
+            try:
+                self.registry_cache.save(index.toolbox_update, index_tools, manifests)
+            except Exception:
+                pass
         except Exception as exc:
             self._update_queue.put(("error", exc))
             return

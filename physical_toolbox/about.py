@@ -53,6 +53,15 @@ def toolbox_about_info() -> AboutInfo:
         ),
         logs=(
             AboutLogEntry(
+                version="v0.1.11",
+                date="2026-06-28",
+                items=(
+                    "启动时优先加载上次检查更新缓存的完整工具列表，未手动检查更新时也能显示已缓存的远程工具。",
+                    "已安装工具缺少本地 tool.json 时仍会显示在工具箱中，避免本地工具从界面消失。",
+                    "新增工具箱目录安全提示，建议放在独立英文目录中，避免与桌面、下载、游戏目录或个人文件混放。",
+                ),
+            ),
+            AboutLogEntry(
                 version="v0.1.10",
                 date="2026-06-26",
                 items=(
